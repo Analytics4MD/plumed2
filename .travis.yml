@@ -20,7 +20,7 @@ matrix:
   - os: linux
     dist: trusty
     sudo: required
-    env: PLUMED_CC=gcc   PLUMED_CXX=g++    CONFIG_FLAGS="--enable-debug --enable-debug-glibcxx"
+    env: PLUMED_CC=gcc   PLUMED_CXX=g++-4.9    CONFIG_FLAGS="--enable-debug --enable-debug-glibcxx"
   - os: linux
     dist: trusty
     sudo: required
@@ -97,6 +97,8 @@ install:
   - export INCLUDE="$HOME/opt/include:$INCLUDE"
   - export LIBRARY_PATH="$HOME/opt/lib:$LIBRARY_PATH"
   - export LD_LIBRARY_PATH="$HOME/opt/lib:$LD_LIBRARY_PATH"
+# better check ccache when setting OMPI_CXX
+  - export CCACHE_COMPILERCHECK="%compiler% -v"
 # Setting the TMPDIR in this way allegedly prevents problems with the compilation of 
 # PLUMED + Python on macos
   - export TMPDIR="/tmp" 
@@ -114,8 +116,6 @@ install:
 # install some package - these are fast, we install them anyway
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -y libfftw3-dev gsl-bin libgsl0-dev  libboost-serialization-dev ; fi
   - if test "$PLUMED_CXX" ; then ./.travis/install.xdrfile ; fi
-# a specific old version of asmjit is required:
-  - if test -n "$ASMJIT" ; then ./.travis/install.asmjit $ASMJIT ; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then
       ./.travis/install.ccache v3.4.3 ;
     fi
@@ -126,10 +126,16 @@ install:
   - if test "$CPPCHECK" == yes ; then  ./.travis/install.gawk 4.2.1 ; fi
 # for plumedcheck I need astyle
   - if test "$CPPCHECK" == yes ; then make -j 4 -C astyle ; fi
+# gcc-4.9
+  - if test "$PLUMED_CXX" -a "$TRAVIS_OS_NAME" == "linux" ; then sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test ; fi
+  - if test "$PLUMED_CXX" -a "$TRAVIS_OS_NAME" == "linux" ; then sudo apt-get update -qq ; fi
+  - if test "$PLUMED_CXX" -a "$TRAVIS_OS_NAME" == "linux" ; then sudo apt-get install -y gcc-4.9 g++-4.9 ; fi
+  - if test "$PLUMED_CXX" == "mpic++" -a "$TRAVIS_OS_NAME" == "linux" ; then export OMPI_CXX=g++-4.9 ; fi
 # installation of these packages takes a lot of time
 # we do it only when needed
   - if test "$PLUMED_CXX" == "mpic++" -a "$TRAVIS_OS_NAME" == "linux" ; then sudo apt-get install -y libopenmpi-dev openmpi-bin ; fi
   - if test "$PLUMED_CXX" == "mpic++" -a "$TRAVIS_OS_NAME" == "osx" ;   then brew install openmpi ; fi
+# stuff for manual
   - if test "$MAKEDOC" == yes ; then sudo apt-get install -y graphviz            ; fi
 # install doxygen-latex
   - if test "$MAKEDOC" == yes ; then sudo apt-get install -y doxygen-latex ; fi
@@ -142,6 +148,8 @@ install:
       sudo pip install numpy ;
       sudo pip install Cython ;
     fi
+# a specific old version of asmjit is required:
+  - if test -n "$ASMJIT" ; then CXX=g++-4.9 ./.travis/install.asmjit $ASMJIT ; fi
 # then replace doxygen with the desided version
 # I use 1.8.10 instead of 1.8.11 since it looks like 1.8.11 have troubles with
 # non case sensitive files (it writes capitalized filenames)
@@ -178,6 +186,7 @@ script:
   - if test "$MAKECOVERAGE" == yes ; then CONFIG_FLAGS="$CONFIG_FLAGS --enable-gcov" ; fi
 # when running lcov plumed should be compiled with -O0
   - if test "$MAKECOVERAGE" == yes ; then PLUMED_CXXFLAGS=-O0 ; fi
+  - if test "$PLUMED_CXX" == "mpic++" -a "$TRAVIS_OS_NAME" == "linux" ; then PLUMED_CXXFLAGS="$PLUMED_CXXFLAGS -Wno-literal-suffix" ; fi
 
 # BUILD:
 # this is done only if PLUMED_CXX is defined
