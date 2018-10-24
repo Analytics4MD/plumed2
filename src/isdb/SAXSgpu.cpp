@@ -103,7 +103,6 @@ private:
   vector<double>      q_list;
 #ifdef  __PLUMED_HAS_ARRAYFIRE
   af::array           FF_value;
-  af::array           q_value;
 #endif
   void getMartiniSFparam(const vector<AtomNumber> &atoms, vector<vector<long double> > &parameter);
   void calculateASF(const vector<AtomNumber> &atoms, vector<vector<long double> > &FF_tmp, const double rho);
@@ -349,7 +348,7 @@ void SAXSGPU::calculate() {
   }
 
   // read out results
-  std::vector<float> inten; 
+  std::vector<float> inten;
   inten.resize(numq);
   sum_device.host(&inten.front());
 
