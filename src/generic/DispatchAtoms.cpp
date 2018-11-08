@@ -67,6 +67,8 @@ class DispatchAtoms:
 #if defined(__PLUMED_DOES_LICHENS_DISPATCH)
   int temp=0;
 #endif
+  int world_size;
+  int world_rank;
 
 public:
   explicit DispatchAtoms(const ActionOptions&);
@@ -94,7 +96,14 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
   ActionAtomistic(ao),
   ActionPilot(ao)
 {
-  retrieve_ptr = new Retrieve();
+  //Get the number of processes
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  
+  // Get the rank of the process
+  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+
+  if (world_rank == 0)
+    retrieve_ptr = new Retrieve();
   vector<AtomNumber> atoms;
   string target;
   parse("TARGET",target);
@@ -114,17 +123,10 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
 }
 
 void DispatchAtoms::update() {
-  //Get the number of processes
-  TimeVar t1=timeNow();
-  int world_size;
-  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-  
-  // Get the rank of the process
-  int world_rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-  //printf("Number of atom positions being dispatched: %d rank %d/%d\n",getNumberOfAtoms(),world_rank,world_size);
+    //printf("Number of atom positions being dispatched: %d rank %d/%d\n",getNumberOfAtoms(),world_rank,world_size);
   if (world_rank ==0)
   {
+    TimeVar t1=timeNow();
     const Tensor & t(getPbc().getBox());
     double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
     lx = lenunit*t(0,0);
@@ -147,6 +149,8 @@ void DispatchAtoms::update() {
     char* module_name = "calc_voronoi_for_frame";
     char* function_name = "analyze";
 
+    int step=getStep(); 
+    //printf("In DISPATCH step: %d\n",step);
     retrieve_ptr->analyze_frame(module_name,
                            function_name,
                            types,
@@ -156,10 +160,11 @@ void DispatchAtoms::update() {
                            lz,
                            xy,
                            xz,
-                           yz);
+                           yz,
+                           step);
+    int time_elapsed = duration(timeNow()-t1);
+    printf("DISPATCH_UPDATE_TIME_rank_%d : %d\n",world_rank,time_elapsed);
   }
-  int time_elapsed = duration(timeNow()-t1);
-  printf("DISPATCH_UPDATE_TIME_rank_%d : %d\n",world_rank,time_elapsed);
 }
 
 DispatchAtoms::~DispatchAtoms() {
