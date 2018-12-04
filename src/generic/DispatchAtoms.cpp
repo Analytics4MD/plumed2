@@ -31,9 +31,13 @@
 #include "core/SetupMolInfo.h"
 #include "core/ActionSet.h"
 #include "retrieve.h"
+#include "dataspaces_writer.h"
+#include "plumed_chunker.h"
+#include "common.h"
 #include <vector>
 #include <tuple>
 #include <chrono>
+#include <string>
 
 #ifndef __PLUMED_DOES_LICHENS_DISPATCH
 #define __PLUMED_DOES_LICHENS_DISPATCH
@@ -54,7 +58,11 @@ namespace generic {
 
 //+PLUMEDOC PRINTANALYSIS DUMPATOMS
 /*
-
+The analysis function should have the following syntax:
+"analyze(types, points, box_points, step)" where 
+types is an array of integers,\n\
+points is an array of array of cartesian coordinates [[x1,y1,z1],[x2,y2,z3],..[xn,yn.zn]]\n\
+box_points is an array of double values representing the simulation box. The values are: [Lx,Ly,Ly,xy,yz,xz]\"
 */
 //+ENDPLUMEDOC
 
@@ -64,11 +72,18 @@ class DispatchAtoms:
 {
   double lenunit;
   Retrieve* retrieve_ptr;
+  DataSpacesWriter* dataspaces_writer_ptr;
+  PlumedChunker chunker = PlumedChunker();
 #if defined(__PLUMED_DOES_LICHENS_DISPATCH)
   int temp=0;
 #endif
   int world_size;
   int world_rank;
+  double elapsed_time = 0.0;
+  double elapsed_time_data = 0.0;
+  string target;
+  string python_module;
+  int total_steps = 0;
 
 public:
   explicit DispatchAtoms(const ActionOptions&);
@@ -87,7 +102,9 @@ void DispatchAtoms::registerKeywords( Keywords& keys ) {
   ActionAtomistic::registerKeywords( keys );
   keys.add("compulsory","STRIDE","1","the frequency with which the atoms should be output");
   keys.add("atoms", "ATOMS", "the atom indices whose positions you would like to print out");
+  keys.add("compulsory","TOTAL_STEPS","20000","the total number of time steps being simulated");
   keys.add("compulsory", "TARGET", "target on which to output coordinates; extension is automatically detected");
+  keys.add("compulsory", "PYTHON_MODULE", "name of the python module to load and execute the analysis code.");
   keys.add("compulsory", "UNITS","PLUMED","the units in which to print out the coordinates. PLUMED means internal PLUMED units");
 }
 
@@ -104,11 +121,24 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
 
   if (world_rank == 0)
     retrieve_ptr = new Retrieve();
+  
+  char* temp_var_name = "sdfsdf";
+  dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name);
+
   vector<AtomNumber> atoms;
-  string target;
+
+  parse("TOTAL_STEPS",total_steps);
+
   parse("TARGET",target);
   if(target.length()==0) error("name out output target was not specified");
-  
+
+  string python_target("PYTHON");
+  if (target.compare(python_target)==0)
+  {
+    parse("PYTHON_MODULE",python_module);
+    if(python_module.length()==0) error("TARGET was specified as \"PYTHON\", but PYTHON_MODULE was not specified");
+  }
+
   parseAtomList("ATOMS",atoms);
 
   std::string unitname; parse("UNITS",unitname);
@@ -127,43 +157,98 @@ void DispatchAtoms::update() {
   if (world_rank ==0)
   {
     TimeVar t1=timeNow();
-    const Tensor & t(getPbc().getBox());
-    double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
-    lx = lenunit*t(0,0);
-    ly = lenunit*t(1,1);
-    lz = lenunit*t(2,2);
-    xy = lenunit*t(0,1); // 0 for orthorhombic
-    xz = lenunit*t(0,2); // 0 for orthorhombic
-    yz = lenunit*t(1,2); // 0 for orthorhombic
+    std::string python_target ("PYTHON");
+    int step = 0;
+    if (target.compare(python_target) == 0)
+    {
+      const Tensor & t(getPbc().getBox());
+      double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
+      lx = lenunit*t(0,0);
+      ly = lenunit*t(1,1);
+      lz = lenunit*t(2,2);
+      xy = lenunit*t(0,1); // 0 for orthorhombic
+      xz = lenunit*t(0,2); // 0 for orthorhombic
+      yz = lenunit*t(1,2); // 0 for orthorhombic
 
-    int atom_count = getNumberOfAtoms();
+      int atom_count = getNumberOfAtoms();
 
-    std::vector<std::tuple<double, double, double> > positions;
-    int types[atom_count];
-    for(int i=0; i<atom_count; ++i) {
-      auto pos_tuple = std::make_tuple(lenunit*getPosition(i)(0), lenunit*getPosition(i)(1), lenunit*getPosition(i)(2));
-      positions.push_back(pos_tuple);
-      types[i] = 0;
+      
+
+      //printf("Calling retrieve call\n");
+      char* module_name = (char*)python_module.c_str();//"calc_voronoi_for_frame";
+      char* function_name = "analyze";
+
+      step=getStep(); 
+      //printf("In DISPATCH step: %d\n",step);
+      bool wf3 = true;
+      if (wf3)
+        {
+          printf("Preparing data to send to dataspace, step %i\n",step);
+          //std::vector<std::vector<double> > positions;
+          std::vector<double> x_positions;
+          std::vector<double> y_positions;
+          std::vector<double> z_positions;
+
+          std::vector<int> types;
+          for(int i=0; i<atom_count; ++i) {
+            //std::vector<double> pos_tuple = {lenunit*getPosition(i)(0), lenunit*getPosition(i)(1), lenunit*getPosition(i)(2)};
+            x_positions.push_back(lenunit*getPosition(i)(0));
+            y_positions.push_back(lenunit*getPosition(i)(1));
+            z_positions.push_back(lenunit*getPosition(i)(2));
+            //positions.push_back(pos_tuple);
+            types.push_back(0);
+          }
+
+          //std::vector<Chunk> chunks;
+          //Chunk ch1;
+          //ch1.data = positions.data();
+          //ch1.size = sizeof(positions.data());
+          //ch1.chunk_id = step;
+          //chunks.push_back(ch1);
+          //PlumedChunker chunker = PlumedChunker(step,
+          //                                      types,
+          //                                      x_positions,
+          //                                      y_positions,
+          //                                      z_positions);
+          chunker.append(step,
+                         types,
+                         x_positions,
+                         y_positions,
+                         z_positions);
+          elapsed_time_data += duration(timeNow()-t1);
+          auto chunk_array = chunker.get_chunk_array();
+          dataspaces_writer_ptr->write_chunks(chunk_array); 
+          //dataspaces_writer_ptr->write_chunks(chunker.chunks_from_file());
+        }
+        else
+        {
+          std::vector<std::tuple<double, double, double> > positions;
+          int types[atom_count];
+          for(int i=0; i<atom_count; ++i) {
+            auto pos_tuple = std::make_tuple(lenunit*getPosition(i)(0), lenunit*getPosition(i)(1), lenunit*getPosition(i)(2));
+            positions.push_back(pos_tuple);
+            types[i] = 0;
+          }
+          elapsed_time_data += duration(timeNow()-t1);
+          retrieve_ptr->analyze_frame(module_name,
+                                 function_name,
+                                 types,
+                                 positions,
+                                 lx,
+                                 ly,
+                                 lz,
+                                 xy,
+                                 xz,
+                                 yz,
+                                 step);
+        }
     }
-    //printf("Calling retrieve call\n");
-    char* module_name = "calc_voronoi_for_frame";
-    char* function_name = "analyze";
-
-    int step=getStep(); 
-    //printf("In DISPATCH step: %d\n",step);
-    retrieve_ptr->analyze_frame(module_name,
-                           function_name,
-                           types,
-                           positions,
-                           lx,
-                           ly,
-                           lz,
-                           xy,
-                           xz,
-                           yz,
-                           step);
-    int time_elapsed = duration(timeNow()-t1);
-    printf("DISPATCH_UPDATE_TIME_rank_%d : %d\n",world_rank,time_elapsed);
+    elapsed_time += duration(timeNow()-t1);
+    if (step >= total_steps)
+    {
+      printf("DISPATCH_UPDATE_TIME_rank_%d : %f\n",world_rank,elapsed_time);
+      printf("DISPATCH_DATA_TIME_rank_%d : %f\n",world_rank,elapsed_time_data);
+    }
   }
 }
 
