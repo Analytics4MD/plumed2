@@ -73,7 +73,8 @@ class DispatchAtoms:
   double lenunit;
   Retrieve* retrieve_ptr;
   DataSpacesWriter* dataspaces_writer_ptr;
-  PlumedChunker chunker = PlumedChunker();
+  PlumedChunker* chunker_ptr;
+  int dispatch_method = 0; // 1: a4md, 2:python 
 #if defined(__PLUMED_DOES_LICHENS_DISPATCH)
   int temp=0;
 #endif
@@ -82,7 +83,7 @@ class DispatchAtoms:
   double elapsed_time = 0.0;
   double elapsed_time_data = 0.0;
   string target;
-  string python_module;
+  string python_function;
   int total_steps = 0;
 
 public:
@@ -103,8 +104,8 @@ void DispatchAtoms::registerKeywords( Keywords& keys ) {
   keys.add("compulsory","STRIDE","1","the frequency with which the atoms should be output");
   keys.add("atoms", "ATOMS", "the atom indices whose positions you would like to print out");
   keys.add("compulsory","TOTAL_STEPS","20000","the total number of time steps being simulated");
-  keys.add("compulsory", "TARGET", "target on which to output coordinates; extension is automatically detected");
-  keys.add("compulsory", "PYTHON_MODULE", "name of the python module to load and execute the analysis code.");
+  keys.add("compulsory", "TARGET", "target on which to output coordinates; Options are \"a4md\" or a python module (provide the name of the .py file including the .py extension. for e.g. md_analysis.py)");
+  keys.add("compulsory", "PYTHON_FUNCTION", "NONE", "name of the python module to load and execute the analysis code. Applicable only if TARGET is a .py file");
   keys.add("compulsory", "UNITS","PLUMED","the units in which to print out the coordinates. PLUMED means internal PLUMED units");
 }
 
@@ -119,25 +120,34 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
   // Get the rank of the process
   MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
-  if (world_rank == 0)
-    retrieve_ptr = new Retrieve();
-  
-  char* temp_var_name = "sdfsdf";
-  dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name);
-
-  vector<AtomNumber> atoms;
+    vector<AtomNumber> atoms;
 
   parse("TOTAL_STEPS",total_steps);
 
   parse("TARGET",target);
+  parse("PYTHON_FUNCTION",python_function);
   if(target.length()==0) error("name out output target was not specified");
 
-  string python_target("PYTHON");
-  if (target.compare(python_target)==0)
+  
+  if (target.find("py") != std::string::npos)
   {
-    parse("PYTHON_MODULE",python_module);
-    if(python_module.length()==0) error("TARGET was specified as \"PYTHON\", but PYTHON_MODULE was not specified");
+    printf("---====== DispatchAtoms found target to be a python module %s\n",target.c_str()); 
+    if(python_function.length()==0) error("TARGET was specified as \"file with .py extension\", but PYTHON_MODULE was not specified");
+    if (world_rank == 0)
+    {
+      retrieve_ptr = new Retrieve((char*)target.c_str(), (char*)python_function.c_str());
+    }
+    dispatch_method = 2;
   }
+  else if (target == "a4md")
+  {
+    chunker_ptr = new PlumedChunker();
+    char* temp_var_name = "test_var";
+    dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name);
+    dispatch_method = 1;
+  }
+  else
+    log.printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
 
   parseAtomList("ATOMS",atoms);
 
@@ -157,9 +167,8 @@ void DispatchAtoms::update() {
   if (world_rank ==0)
   {
     TimeVar t1=timeNow();
-    std::string python_target ("PYTHON");
     int step = 0;
-    if (target.compare(python_target) == 0)
+    if (dispatch_method == 1)//a4md
     {
       const Tensor & t(getPbc().getBox());
       double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
@@ -171,12 +180,6 @@ void DispatchAtoms::update() {
       yz = lenunit*t(1,2); // 0 for orthorhombic
 
       int atom_count = getNumberOfAtoms();
-
-      
-
-      //printf("Calling retrieve call\n");
-      char* module_name = (char*)python_module.c_str();//"calc_voronoi_for_frame";
-      char* function_name = "analyze";
 
       step=getStep(); 
       //printf("In DISPATCH step: %d\n",step);
@@ -190,7 +193,8 @@ void DispatchAtoms::update() {
           std::vector<double> z_positions;
 
           std::vector<int> types;
-          for(int i=0; i<atom_count; ++i) {
+          for(int i=0; i<atom_count; ++i) 
+          {
             //std::vector<double> pos_tuple = {lenunit*getPosition(i)(0), lenunit*getPosition(i)(1), lenunit*getPosition(i)(2)};
             x_positions.push_back(lenunit*getPosition(i)(0));
             y_positions.push_back(lenunit*getPosition(i)(1));
@@ -199,49 +203,50 @@ void DispatchAtoms::update() {
             types.push_back(0);
           }
 
-          //std::vector<Chunk> chunks;
-          //Chunk ch1;
-          //ch1.data = positions.data();
-          //ch1.size = sizeof(positions.data());
-          //ch1.chunk_id = step;
-          //chunks.push_back(ch1);
-          //PlumedChunker chunker = PlumedChunker(step,
-          //                                      types,
-          //                                      x_positions,
-          //                                      y_positions,
-          //                                      z_positions);
-          chunker.append(step,
+          chunker_ptr->append(step,
                          types,
                          x_positions,
                          y_positions,
-                         z_positions);
-          elapsed_time_data += duration(timeNow()-t1);
-          auto chunk_array = chunker.get_chunk_array();
-          dataspaces_writer_ptr->write_chunks(chunk_array); 
-          //dataspaces_writer_ptr->write_chunks(chunker.chunks_from_file());
+                         z_positions,
+                         lx,ly,lz,
+                         xy,xz,yz);
+
+          int num_chunks = 1;
+          auto chunks = chunker_ptr->get_chunks(num_chunks);
+          dataspaces_writer_ptr->write_chunks(chunks);
+
         }
-        else
+        else if (dispatch_method == 1)
         {
-          std::vector<std::tuple<double, double, double> > positions;
-          int types[atom_count];
-          for(int i=0; i<atom_count; ++i) {
-            auto pos_tuple = std::make_tuple(lenunit*getPosition(i)(0), lenunit*getPosition(i)(1), lenunit*getPosition(i)(2));
-            positions.push_back(pos_tuple);
-            types[i] = 0;
+          std::vector<double> x_positions;
+          std::vector<double> y_positions;
+          std::vector<double> z_positions;
+
+          std::vector<int> types;
+          for(int i=0; i<atom_count; ++i) 
+          {
+            //std::vector<double> pos_tuple = {lenunit*getPosition(i)(0), lenunit*getPosition(i)(1), lenunit*getPosition(i)(2)};
+            x_positions.push_back(lenunit*getPosition(i)(0));
+            y_positions.push_back(lenunit*getPosition(i)(1));
+            z_positions.push_back(lenunit*getPosition(i)(2));
+            //positions.push_back(pos_tuple);
+            types.push_back(0);
           }
           elapsed_time_data += duration(timeNow()-t1);
-          retrieve_ptr->analyze_frame(module_name,
-                                 function_name,
-                                 types,
-                                 positions,
-                                 lx,
-                                 ly,
-                                 lz,
-                                 xy,
-                                 xz,
-                                 yz,
-                                 step);
+          retrieve_ptr->analyze_frame(types,
+                                      x_positions,
+                                      y_positions,
+                                      z_positions,
+                                      lx,
+                                      ly,
+                                      lz,
+                                      xy,
+                                      xz,
+                                      yz,
+                                      step);
         }
+        else
+          log.printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
     }
     elapsed_time += duration(timeNow()-t1);
     if (step >= total_steps)
@@ -253,8 +258,13 @@ void DispatchAtoms::update() {
 }
 
 DispatchAtoms::~DispatchAtoms() {
+  chunker_ptr = NULL;
+  delete chunker_ptr;
+  dataspaces_writer_ptr = NULL;
+  delete dataspaces_writer_ptr;
+  retrieve_ptr = NULL;
+  delete retrieve_ptr;
+
 }
-
-
 }
 }
