@@ -86,6 +86,9 @@ class DispatchAtoms:
   double total_simulation_time_ms = 0.0;
   double simulation_time_ms = 0.0;
   double total_plumed_time_ms = 0.0;
+  double total_retrieve_time_ms = 0.0;
+  double total_read_plumed_data_time_ms = 0.0;
+  TimeVar t_start;
   DurationMilli plumed_time_ms;
   //int stride = 0;
   string target;
@@ -94,8 +97,8 @@ class DispatchAtoms:
   string data_stage;
   int total_steps = 0;
   int nstride = 0;
-  TimeVar t_start;
   unsigned long int current_chunk_id = 0;
+  std::vector<std::string> ds_write_time_stamps;
 public:
   explicit DispatchAtoms(const ActionOptions&);
   ~DispatchAtoms();
@@ -205,18 +208,12 @@ void DispatchAtoms::update() {
       DurationMilli round_about_time_ms = timeNow() - t_start;
       auto prev_simulation_time_ms = round_about_time_ms.count() - plumed_time_ms.count();
       total_simulation_time_ms += prev_simulation_time_ms;
-      total_plumed_time_ms += plumed_time_ms.count();
-  }
-  if (step == total_steps)
-  {
-      log.printf("total_dispatch_action_time_ms : %f\n",total_plumed_time_ms);
-      log.printf("total_simulation_time_ms : %f\n",total_simulation_time_ms);
-      log.printf("total_time_steps : %d\n",total_steps);
   }
   t_start = timeNow();
 
   if (dispatch_method > 0)
   {
+    TimeVar t_start_read_frame = timeNow();
     const Tensor & t(getPbc().getBox());
     double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
     lx = lenunit*t(0,0);
@@ -227,23 +224,26 @@ void DispatchAtoms::update() {
     yz = lenunit*t(1,2); // 0 for orthorhombic
 
     int atom_count = getNumberOfAtoms();
+    
+    std::vector<double> x_positions;
+    std::vector<double> y_positions;
+    std::vector<double> z_positions;
 
+    std::vector<int> types;
+    for(int i=0; i<atom_count; ++i) 
+    {
+      x_positions.push_back(lenunit*getPosition(i)(0));
+      y_positions.push_back(lenunit*getPosition(i)(1));
+      z_positions.push_back(lenunit*getPosition(i)(2));
+      types.push_back(0);
+    }
+    DurationMilli read_plumed_data_time_ms = timeNow()-t_start_read_frame;
+    total_read_plumed_data_time_ms += read_plumed_data_time_ms.count();
     //printf("In DISPATCH step: %d\n",step);
     bool wf3 = true;
     if (dispatch_method==1) // plumed
     {
-      std::vector<double> x_positions;
-      std::vector<double> y_positions;
-      std::vector<double> z_positions;
-
-      std::vector<int> types;
-      for(int i=0; i<atom_count; ++i) 
-      {
-        x_positions.push_back(lenunit*getPosition(i)(0));
-        y_positions.push_back(lenunit*getPosition(i)(1));
-        z_positions.push_back(lenunit*getPosition(i)(2));
-        types.push_back(0);
-      }
+      TimeVar t_start_retrieve = timeNow();
       retrieve_ptr->analyze_frame(types,
                                   x_positions,
                                   y_positions,
@@ -256,22 +256,12 @@ void DispatchAtoms::update() {
                                   yz,
                                   step);
       
+      DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
+      total_retrieve_time_ms += retrieve_time_ms.count();
     }
     else if (dispatch_method > 1) //plumed_ds
     {
       //printf("Preparing data to send to dataspace, step %i\n",step);
-      std::vector<double> x_positions;
-      std::vector<double> y_positions;
-      std::vector<double> z_positions;
-
-      std::vector<int> types;
-      for(int i=0; i<atom_count; ++i) 
-      {
-        x_positions.push_back(lenunit*getPosition(i)(0));
-        y_positions.push_back(lenunit*getPosition(i)(1));
-        z_positions.push_back(lenunit*getPosition(i)(2));
-        types.push_back(0);
-      }
       PLMDChunk plmd_chunk(current_chunk_id,
                            step,
                            types,
@@ -291,6 +281,7 @@ void DispatchAtoms::update() {
       //printf("----===== Writing Chunk %i to DataSpaces STOP====----\n",current_chunk_id);
       if (dispatch_method == 2)
       {
+        TimeVar t_start_retrieve = timeNow();
         //printf("----===== Reading Chunk %i from DataSpaces START====----\n",current_chunk_id);
         std::vector<Chunk*> in_chunks = dataspaces_reader_ptr->get_chunks(current_chunk_id, current_chunk_id);
         //printf("----===== Reading Chunk %i from DataSpaces STOP====----\n",current_chunk_id);
@@ -326,6 +317,8 @@ void DispatchAtoms::update() {
                                           step);
               
         }
+        DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
+        total_retrieve_time_ms += retrieve_time_ms.count();
       }
       current_chunk_id++;
     }
@@ -334,7 +327,33 @@ void DispatchAtoms::update() {
   }
   else
       log.printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
+
   plumed_time_ms = timeNow()-t_start;
+  total_plumed_time_ms += plumed_time_ms.count();
+
+  //high_resolution_clock::time_point p = timeNow();
+  //milliseconds ms = duration_cast<milliseconds>(p.time_since_epoch());
+  //std::size_t fractional_seconds = ms.count() % 1000;
+  //seconds s = duration_cast<seconds>(ms);
+  //std::time_t t = s.count();
+  //char mbstr[100];
+  //if (std::strftime(mbstr, sizeof(mbstr), "%A %c", std::localtime(&t))==0)
+  //{
+  //    std::cout << "ERROR while trying to convert time to string in DispatchAtoms" << '\n';
+  //}
+  //std::string timeval = std::string(mbstr)+ ","+std::to_string(fractional_seconds);
+  //ds_write_time_stamps.push_back(timeval);
+
+  if (step == total_steps)
+  {
+      log.printf("total_dispatch_action_time_ms : %f\n",total_plumed_time_ms);
+      log.printf("total_simulation_time_ms : %f\n",total_simulation_time_ms);
+      log.printf("total_retriever_time_ms : %f\n",total_retrieve_time_ms);
+      log.printf("total_read_plumed_data_time_ms : %f\n",total_read_plumed_data_time_ms);
+      log.printf("total_time_steps : %d\n",total_steps);
+      //std::ofstream outFile("ds_write_time_stamps.txt");
+      //for (const auto &e : ds_write_time_stamps) outFile << e << "\n";
+  }
 }
 
 DispatchAtoms::~DispatchAtoms() {
