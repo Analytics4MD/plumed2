@@ -281,10 +281,10 @@ void DispatchAtoms::update() {
       //printf("----===== Writing Chunk %i to DataSpaces STOP====----\n",current_chunk_id);
       if (dispatch_method == 2)
       {
-        TimeVar t_start_retrieve = timeNow();
         //printf("----===== Reading Chunk %i from DataSpaces START====----\n",current_chunk_id);
         std::vector<Chunk*> in_chunks = dataspaces_reader_ptr->get_chunks(current_chunk_id, current_chunk_id);
         //printf("----===== Reading Chunk %i from DataSpaces STOP====----\n",current_chunk_id);
+
         for (Chunk* chunk: in_chunks)
         {
               PLMDChunk *plmdchunk = dynamic_cast<PLMDChunk *>(chunk);
@@ -304,6 +304,7 @@ void DispatchAtoms::update() {
               yz = plmdchunk->get_box_yz(); // 0 for orthorhombic
               int step = plmdchunk->get_timestep();
               
+              TimeVar t_start_retrieve = timeNow();
               retrieve_ptr->analyze_frame(types_vector,
                                           x_positions,
                                           y_positions,
@@ -315,10 +316,9 @@ void DispatchAtoms::update() {
                                           xz,
                                           yz,
                                           step);
-              
+              DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
+              total_retrieve_time_ms += retrieve_time_ms.count();
         }
-        DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
-        total_retrieve_time_ms += retrieve_time_ms.count();
       }
       current_chunk_id++;
     }
@@ -348,7 +348,7 @@ void DispatchAtoms::update() {
   {
       log.printf("total_dispatch_action_time_ms : %f\n",total_plumed_time_ms);
       log.printf("total_simulation_time_ms : %f\n",total_simulation_time_ms);
-      log.printf("total_retriever_time_ms : %f\n",total_retrieve_time_ms);
+      log.printf("total_pyanalyzer_time_ms : %f\n",total_retrieve_time_ms);
       log.printf("total_read_plumed_data_time_ms : %f\n",total_read_plumed_data_time_ms);
       log.printf("total_time_steps : %d\n",total_steps);
       //std::ofstream outFile("ds_write_time_stamps.txt");
