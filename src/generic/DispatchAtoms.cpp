@@ -30,7 +30,8 @@
 #include <memory>
 #include "core/SetupMolInfo.h"
 #include "core/ActionSet.h"
-#include "retrieve.h"
+//#include "retrieve.h"
+#include "py_runner.h"
 #include "dataspaces_writer.h"
 #include "dataspaces_reader.h"
 //#include "plumed_chunker.h"
@@ -73,7 +74,7 @@ class DispatchAtoms:
   public ActionPilot
 {
   double lenunit;
-  Retrieve* retrieve_ptr;
+  PyRunner* pyrunner_ptr;
   DataSpacesWriter* dataspaces_writer_ptr;
   DataSpacesReader* dataspaces_reader_ptr;
   //PlumedChunker* chunker_ptr;
@@ -154,8 +155,8 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
   {
     if(python_module=="NONE") error("TARGET was specified as \"py\", but PYTHON_MODULE was not specified");
     if(python_function=="NONE") error("TARGET was specified as \"py\", but PYTHON_FUNCTION was not specified");
-    retrieve_ptr = new Retrieve((char*)python_module.c_str(), (char*)python_function.c_str());
-    printf("----===== Initialized Retrieve ====----\n");
+    pyrunner_ptr = new PyRunner((char*)python_module.c_str(), (char*)python_function.c_str());
+    printf("----===== Initialized PyRunner ====----\n");
     if (data_stage == "dataspaces")
     {
       dispatch_method = 2;
@@ -244,7 +245,7 @@ void DispatchAtoms::update() {
     if (dispatch_method==1) // plumed
     {
       TimeVar t_start_retrieve = timeNow();
-      retrieve_ptr->analyze_frame(types,
+      pyrunner_ptr->analyze_frame(types,
                                   x_positions,
                                   y_positions,
                                   z_positions,
@@ -305,7 +306,7 @@ void DispatchAtoms::update() {
               int step = plmdchunk->get_timestep();
               
               TimeVar t_start_retrieve = timeNow();
-              retrieve_ptr->analyze_frame(types_vector,
+              pyrunner_ptr->analyze_frame(types_vector,
                                           x_positions,
                                           y_positions,
                                           z_positions,
@@ -361,8 +362,8 @@ DispatchAtoms::~DispatchAtoms() {
   delete dataspaces_writer_ptr;
   dataspaces_reader_ptr = NULL;
   delete dataspaces_reader_ptr;
-  retrieve_ptr = NULL;
-  delete retrieve_ptr;
+  pyrunner_ptr = NULL;
+  delete pyrunner_ptr;
 
 }
 }
