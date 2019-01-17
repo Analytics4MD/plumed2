@@ -263,7 +263,7 @@ void DispatchAtoms::update() {
     else if (dispatch_method > 1) //plumed_ds
     {
       //printf("Preparing data to send to dataspace, step %i\n",step);
-      PLMDChunk plmd_chunk(current_chunk_id,
+      MDChunk plmd_chunk(current_chunk_id,
                            step,
                            types,
                            x_positions,
@@ -288,7 +288,7 @@ void DispatchAtoms::update() {
 
         for (Chunk* chunk: in_chunks)
         {
-              PLMDChunk *plmdchunk = dynamic_cast<PLMDChunk *>(chunk);
+              MDChunk *plmdchunk = dynamic_cast<MDChunk *>(chunk);
               //printf("Printing typecasted chunk\n");
               //chunk->print();
               auto x_positions = plmdchunk->get_x_positions();
