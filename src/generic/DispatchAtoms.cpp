@@ -36,7 +36,6 @@
 #include "dataspaces_reader.h"
 //#include "plumed_chunker.h"
 #include "chunk.h"
-#include "common.h"
 #include <vector>
 #include <tuple>
 #include <chrono>
