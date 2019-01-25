@@ -134,7 +134,6 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
   
   // Get the rank of the process
   MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-
   vector<AtomNumber> atoms;
 
   parse("TOTAL_STEPS",total_steps);
@@ -148,13 +147,17 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
   log.printf("STRIDE: %i\n",nstride);
   log.printf("TARGET: %s\n",target.c_str());
   log.printf("PYTHON_FUNCTION: %s\n",python_function.c_str());
+  
   if(target == "NONE") error("name out output target was not specified");
 
   if (target == "py")
   {
     if(python_module=="NONE") error("TARGET was specified as \"py\", but PYTHON_MODULE was not specified");
     if(python_function=="NONE") error("TARGET was specified as \"py\", but PYTHON_FUNCTION was not specified");
-    pyrunner_ptr = new PyRunner((char*)python_module.c_str(), (char*)python_function.c_str());
+    if (world_rank == 0)
+    {
+      pyrunner_ptr = new PyRunner((char*)python_module.c_str(), (char*)python_function.c_str());
+    }
     printf("----===== Initialized PyRunner ====----\n");
     if (data_stage == "dataspaces")
     {
@@ -199,8 +202,9 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
   requestAtoms(atoms);
 }
 
-void DispatchAtoms::update() {
-    //printf("Number of atom positions being dispatched: %d rank %d/%d\n",getNumberOfAtoms(),world_rank,world_size);
+void DispatchAtoms::update() 
+{
+  //printf("Number of atom positions being dispatched: %d rank %d/%d\n",getNumberOfAtoms(),world_rank,world_size);
   auto step = getStep(); 
   //printf("---=== DispatchAtoms::update %i ===---\n",step);
   if (step > 0)
@@ -243,21 +247,24 @@ void DispatchAtoms::update() {
     bool wf3 = true;
     if (dispatch_method==1) // plumed
     {
-      TimeVar t_start_retrieve = timeNow();
-      pyrunner_ptr->analyze_frame(types,
-                                  x_positions,
-                                  y_positions,
-                                  z_positions,
-                                  lx,
-                                  ly,
-                                  lz,
-                                  xy,
-                                  xz,
-                                  yz,
-                                  step);
+      if (world_rank == 0)
+      {
+        TimeVar t_start_retrieve = timeNow();
+        pyrunner_ptr->analyze_frame(types,
+                                    x_positions,
+                                    y_positions,
+                                    z_positions,
+                                    lx,
+                                    ly,
+                                    lz,
+                                    xy,
+                                    xz,
+                                    yz,
+                                    step);
       
-      DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
-      total_retrieve_time_ms += retrieve_time_ms.count();
+        DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
+        total_retrieve_time_ms += retrieve_time_ms.count();
+      }
     }
     else if (dispatch_method > 1) //plumed_ds
     {
@@ -304,20 +311,23 @@ void DispatchAtoms::update() {
               yz = plmdchunk->get_box_yz(); // 0 for orthorhombic
               int step = plmdchunk->get_timestep();
               
-              TimeVar t_start_retrieve = timeNow();
-              pyrunner_ptr->analyze_frame(types_vector,
-                                          x_positions,
-                                          y_positions,
-                                          z_positions,
-                                          lx,
-                                          ly,
-                                          lz,
-                                          xy,
-                                          xz,
-                                          yz,
-                                          step);
-              DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
-              total_retrieve_time_ms += retrieve_time_ms.count();
+              if (world_rank == 0)
+              {
+                TimeVar t_start_retrieve = timeNow();
+                pyrunner_ptr->analyze_frame(types_vector,
+                                            x_positions,
+                                            y_positions,
+                                            z_positions,
+                                            lx,
+                                            ly,
+                                            lz,
+                                            xy,
+                                            xz,
+                                            yz,
+                                            step);
+                DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
+                total_retrieve_time_ms += retrieve_time_ms.count();
+              }
         }
       }
       current_chunk_id++;
@@ -354,9 +364,11 @@ void DispatchAtoms::update() {
       //std::ofstream outFile("ds_write_time_stamps.txt");
       //for (const auto &e : ds_write_time_stamps) outFile << e << "\n";
   }
+
 }
 
-DispatchAtoms::~DispatchAtoms() {
+DispatchAtoms::~DispatchAtoms() 
+{
   dataspaces_writer_ptr = NULL;
   delete dataspaces_writer_ptr;
   dataspaces_reader_ptr = NULL;
