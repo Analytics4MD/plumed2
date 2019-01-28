@@ -180,6 +180,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     {
       char* temp_var_name = "test_var";
       unsigned long int total_chunks = total_steps/nstride + 1;// +1 for the first call before starting simulation
+      printf("-------=========== COnstructing DataSpacesWriter in Plumed ==========--------\n");
       dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name, total_chunks);
       dispatch_method = 3;
     }
