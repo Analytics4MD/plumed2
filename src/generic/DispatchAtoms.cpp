@@ -134,6 +134,8 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
   
   // Get the rank of the process
   MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+  printf("---=== Constructing PLUMED DispatchAtomsAction rank :%i \n",world_rank);
+
   vector<AtomNumber> atoms;
 
   parse("TOTAL_STEPS",total_steps);
@@ -147,7 +149,10 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
   log.printf("STRIDE: %i\n",nstride);
   log.printf("TARGET: %s\n",target.c_str());
   log.printf("PYTHON_FUNCTION: %s\n",python_function.c_str());
-  
+  printf("---=== PLUMED(%i) Paramerer: STRIDE: %i\n",world_rank, nstride);
+  printf("---=== PLUMED(%i) Paramerer: TARGET: %s\n",world_rank, target.c_str());
+  printf("---=== PLUMED(%i) Paramerer: PYTHON_FUNCTION: %s\n",world_rank, python_function.c_str());
+
   if(target == "NONE") error("name out output target was not specified");
 
   if (target == "py")
