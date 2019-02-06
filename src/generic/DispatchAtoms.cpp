@@ -130,11 +130,12 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
   ActionPilot(ao)
 {
   //Get the number of processes
-  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-  
+  //MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  world_size = comm.Get_size();
+  world_rank = comm.Get_rank();
   // Get the rank of the process
-  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-  printf("---=== Constructing PLUMED DispatchAtomsAction rank :%i \n",world_rank);
+  //MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+  printf("---=== Constructing PLUMED DispatchAtomsAction rank :%i, size :%i \n",world_rank,world_size);
 
   vector<AtomNumber> atoms;
 
@@ -149,9 +150,9 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
   log.printf("STRIDE: %i\n",nstride);
   log.printf("TARGET: %s\n",target.c_str());
   log.printf("PYTHON_FUNCTION: %s\n",python_function.c_str());
-  printf("---=== PLUMED(%i) Paramerer: STRIDE: %i\n",world_rank, nstride);
-  printf("---=== PLUMED(%i) Paramerer: TARGET: %s\n",world_rank, target.c_str());
-  printf("---=== PLUMED(%i) Paramerer: PYTHON_FUNCTION: %s\n",world_rank, python_function.c_str());
+  //printf("---=== PLUMED(%i) Paramerer: STRIDE: %i\n",world_rank, nstride);
+  //printf("---=== PLUMED(%i) Paramerer: TARGET: %s\n",world_rank, target.c_str());
+  //printf("---=== PLUMED(%i) Paramerer: PYTHON_FUNCTION: %s\n",world_rank, python_function.c_str());
 
   if(target == "NONE") error("name out output target was not specified");
 
@@ -170,8 +171,8 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
       char* temp_var_name = "test_var";
       unsigned long int total_chunks = total_steps/nstride + 1;// +1 for the first call before starting simulation
       printf("----===== Initializing DataSpaces Reader and Writer ====----\n");
-      dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name, total_chunks);
-      dataspaces_reader_ptr = new DataSpacesReader(temp_var_name, total_chunks);
+      dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name, total_chunks, comm.Get_comm());
+      dataspaces_reader_ptr = new DataSpacesReader(temp_var_name, total_chunks, comm.Get_comm());
       printf("----===== Initialized DataSpaces Reader and Writer ====----\n");
     }
     else
@@ -186,7 +187,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
       char* temp_var_name = "test_var";
       unsigned long int total_chunks = total_steps/nstride + 1;// +1 for the first call before starting simulation
       printf("-------=========== COnstructing DataSpacesWriter in Plumed ==========--------\n");
-      dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name, total_chunks);
+      dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name, total_chunks, comm.Get_comm());
       dispatch_method = 3;
     }
     else
