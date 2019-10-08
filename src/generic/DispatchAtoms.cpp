@@ -138,6 +138,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     parse("PYTHON_MODULE",python_module);
     parse("PYTHON_FUNCTION",python_function);
     nstride = getStride();
+    // Print out to log
     log.printf("TOTAL_STEPS: %i\n",total_steps);
     log.printf("STRIDE: %i\n",nstride);
     log.printf("TARGET: %s\n",target.c_str());
@@ -149,10 +150,11 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     checkRead();
     requestAtoms(atoms);
 
-    //Get the number of processes
+    // Get the number of processes
     // Get the rank of the process
     world_size = comm.Get_size();
     world_rank = comm.Get_rank();
+
     // Create sub communicator on root process for DTL 
     int color;
     if (world_rank == 0) 
@@ -170,7 +172,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     {
         int dtl_rank;
         MPI_Comm_rank(dtl_comm, &dtl_rank);
-        printf("---=== Constructing PLUMED DispatchAtomsAction world_rank :%i, nprocs :%i dtl_rank : %d \n",world_rank,world_size, dtl_rank);
+        printf("----===== Constructing PLUMED DispatchAtomsAction world_rank :%i, nprocs :%i dtl_rank : %d \n",world_rank,world_size, dtl_rank);
 
         if(target == "NONE") error("name out output target was not specified");
 
@@ -204,7 +206,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
             {
                 char* temp_var_name = "test_var";
                 unsigned long int total_chunks = total_steps/nstride + 1;// +1 for the first call before starting simulation
-                printf("-------=========== COnstructing DataSpacesWriter in Plumed ==========--------\n");
+                printf("----===== Constructing DataSpacesWriter in Plumed ==========--------\n");
                 
                 dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name, total_chunks, dtl_comm);
                 dispatch_method = 3;
@@ -227,7 +229,7 @@ void DispatchAtoms::update()
     {
         int atom_count = getNumberOfAtoms();
         auto step = getStep(); 
-        printf("---===== DispatchAtoms::update() Dispatch step: %i Number of atoms being dispatched: %d Rank: %d nprocs: %d =====---\n", step, atom_count, world_rank, world_size);
+        printf("----===== DispatchAtoms::update() Dispatch step: %i Number of atoms being dispatched: %d Rank: %d nprocs: %d =====---\n", step, atom_count, world_rank, world_size);
 
 #ifdef BUILT_IN_PERF
         if (step > 0)
