@@ -191,8 +191,8 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
                 char* temp_var_name = "test_var";
                 unsigned long int total_chunks = total_steps/nstride + 1;// +1 for the first call before starting simulation
                 printf("----===== Initializing DataSpaces Reader and Writer ====----\n");
-                dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name, total_chunks, dtl_comm);
-                dataspaces_reader_ptr = new DataSpacesReader(temp_var_name, total_chunks, dtl_comm);
+                dataspaces_writer_ptr = new DataSpacesWriter(1, temp_var_name, total_chunks, dtl_comm);
+                dataspaces_reader_ptr = new DataSpacesReader(2, temp_var_name, total_chunks, dtl_comm);
                 printf("----===== Initialized DataSpaces Reader and Writer ====----\n");
             }
             else
@@ -208,7 +208,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
                 unsigned long int total_chunks = total_steps/nstride + 1;// +1 for the first call before starting simulation
                 printf("----===== Constructing DataSpacesWriter in Plumed ==========--------\n");
                 
-                dataspaces_writer_ptr = new DataSpacesWriter(temp_var_name, total_chunks, dtl_comm);
+                dataspaces_writer_ptr = new DataSpacesWriter(1, temp_var_name, total_chunks, dtl_comm);
                 dispatch_method = 3;
             }
             else
