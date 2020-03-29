@@ -43,6 +43,11 @@
 #include "chunk.h"
 #include "timer.h"
 
+// TAU headers
+#ifdef TAU_PERF
+#include <TAU.h>
+#endif
+
 
 #ifndef __PLUMED_DOES_LICHENS_DISPATCH
 #define __PLUMED_DOES_LICHENS_DISPATCH
@@ -240,11 +245,17 @@ void DispatchAtoms::update()
         }
         t_start = timeNow();
 #endif
+#ifdef TAU_PERF
+        TAU_DYNAMIC_TIMER_START("step_plumed_time");
+#endif
 
         if (dispatch_method > 0)
         {
 #ifdef BUILT_IN_PERF
             TimeVar t_start_read_frame = timeNow();
+#endif
+#ifdef TAU_PERF
+            TAU_DYNAMIC_TIMER_START("step_read_plumed_data_time");
 #endif
             const Tensor & t(getPbc().getBox());
             double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
@@ -273,6 +284,9 @@ void DispatchAtoms::update()
 #ifdef BUILT_IN_PERF
             DurationMilli read_plumed_data_time_ms = timeNow()-t_start_read_frame;
             total_read_plumed_data_time_ms += read_plumed_data_time_ms.count();
+#endif
+#ifdef TAU_PERF
+            TAU_DYNAMIC_TIMER_STOP("step_read_plumed_data_time");
 #endif
             bool wf3 = true;
             if (dispatch_method==1) // plumed
@@ -313,7 +327,6 @@ void DispatchAtoms::update()
                                     xy,
                                     xz,
                                     yz);
-
                 Chunk* chunk = &plmd_chunk; 
                 std::vector<Chunk*> chunks = {chunk};
                 dataspaces_writer_ptr->write_chunks(chunks);
@@ -380,7 +393,10 @@ void DispatchAtoms::update()
                 printf("total_read_plumed_data_time_ms : %f\n",total_read_plumed_data_time_ms);
                 printf("total_time_steps : %d\n",total_steps);
         }
-#endif        
+#endif      
+#ifdef TAU_PERF
+        TAU_DYNAMIC_TIMER_STOP("step_plumed_time");
+#endif  
     }
 }
 
