@@ -92,11 +92,16 @@ class DispatchAtoms:
     int world_size;
     int world_rank;
 #ifdef BUILT_IN_PERF
+    int total_chunks = 0;
     double total_simulation_time_ms = 0.0;
     double simulation_time_ms = 0.0;
     double total_plumed_time_ms = 0.0;
     double total_retrieve_time_ms = 0.0;
     double total_read_plumed_data_time_ms = 0.0;
+    double *step_simulation_time_ms;
+    double *step_plumed_time_ms;
+    double *step_retrieve_time_ms;
+    double *step_read_plumed_data_time_ms;
 #endif
     string target;
     string python_module;
@@ -154,6 +159,14 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     lenunit=1.0;
     checkRead();
     requestAtoms(atoms);
+
+#ifdef BUILT_IN_PERF
+    total_chunks = total_steps / nstride + 1;
+    step_simulation_time_ms = new double[total_chunks];
+    step_plumed_time_ms = new double[total_chunks];
+    step_retrieve_time_ms = new double[total_chunks];
+    step_read_plumed_data_time_ms = new double[total_chunks];
+#endif
 
     // Get the number of processes
     // Get the rank of the process
@@ -239,9 +252,10 @@ void DispatchAtoms::update()
 #ifdef BUILT_IN_PERF
         if (step > 0)
         {
-                DurationMilli round_about_time_ms = timeNow() - t_start;
-                auto prev_simulation_time_ms = round_about_time_ms.count() - plumed_time_ms.count();
-                total_simulation_time_ms += prev_simulation_time_ms;
+            DurationMilli round_about_time_ms = timeNow() - t_start;
+            auto prev_simulation_time_ms = round_about_time_ms.count() - plumed_time_ms.count();
+            step_simulation_time_ms[current_chunk_id - 1] = prev_simulation_time_ms;
+            total_simulation_time_ms += prev_simulation_time_ms;
         }
         t_start = timeNow();
 #endif
@@ -283,7 +297,8 @@ void DispatchAtoms::update()
             }
 #ifdef BUILT_IN_PERF
             DurationMilli read_plumed_data_time_ms = timeNow()-t_start_read_frame;
-            total_read_plumed_data_time_ms += read_plumed_data_time_ms.count();
+            step_read_plumed_data_time_ms[current_chunk_id] = read_plumed_data_time_ms.count();
+            total_read_plumed_data_time_ms += step_read_plumed_data_time_ms[current_chunk_id];
 #endif
 #ifdef TAU_PERF
             TAU_DYNAMIC_TIMER_STOP("step_read_plumed_data_time");
@@ -374,7 +389,6 @@ void DispatchAtoms::update()
                         }
                     }
                 }
-                current_chunk_id++;
             }
             else
                 printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
@@ -384,19 +398,49 @@ void DispatchAtoms::update()
 
 #ifdef BUILT_IN_PERF
         plumed_time_ms = timeNow()-t_start;
-        total_plumed_time_ms += plumed_time_ms.count();
-        if (step == total_steps)
-        {
-                printf("total_dispatch_action_time_ms : %f\n",total_plumed_time_ms);
-                printf("total_simulation_time_ms : %f\n",total_simulation_time_ms);
-                printf("total_pyanalyzer_time_ms : %f\n",total_retrieve_time_ms);
-                printf("total_read_plumed_data_time_ms : %f\n",total_read_plumed_data_time_ms);
-                printf("total_time_steps : %d\n",total_steps);
-        }
+        step_plumed_time_ms[current_chunk_id] = plumed_time_ms.count()
+        total_plumed_time_ms += step_plumed_time_ms[current_chunk_id];       
 #endif      
 #ifdef TAU_PERF
         TAU_DYNAMIC_TIMER_STOP("step_plumed_time");
 #endif  
+#ifdef BUILT_IN_PERF
+        if (step == total_steps)
+        {
+            printf("total_plumed_time_ms : %f\n",total_plumed_time_ms);
+            printf("total_simulation_time_ms : %f\n",total_simulation_time_ms);
+            printf("total_pyanalyzer_time_ms : %f\n",total_retrieve_time_ms);
+            printf("total_read_plumed_data_time_ms : %f\n",total_read_plumed_data_time_ms);
+            printf("total_time_steps : %d\n",total_steps);
+
+            printf("step_plumed_time_ms : ");
+            for (auto step = 0; step < total_chunks; step++)
+            {
+                printf(" %f ", step_plumed_time_ms[step]);
+            }
+            printf("\n"); 
+
+            printf("step_simulation_time_ms : ");
+            for (auto step = 0; step < total_chunks; step++)
+            {
+                printf(" %f ", step_simulation_time_ms[step]);
+            }
+            printf("\n"); 
+
+            printf("step_read_plumed_data_time_ms : ");
+            for (auto step = 0; step < total_chunks; step++)
+            {
+                printf(" %f ", step_read_plumed_data_time_ms[step]);
+            }
+            printf("\n"); 
+
+            delete[] step_simulation_time_ms;
+            delete[] step_plumed_time_ms;
+            delete[] step_retrieve_time_ms;
+            delete[] step_read_plumed_data_time_ms;   
+        }
+#endif
+        current_chunk_id++;
     }
 }
 
