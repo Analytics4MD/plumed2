@@ -398,7 +398,7 @@ void DispatchAtoms::update()
 
 #ifdef BUILT_IN_PERF
         plumed_time_ms = timeNow()-t_start;
-        step_plumed_time_ms[current_chunk_id] = plumed_time_ms.count()
+        step_plumed_time_ms[current_chunk_id] = plumed_time_ms.count();
         total_plumed_time_ms += step_plumed_time_ms[current_chunk_id];       
 #endif      
 #ifdef TAU_PERF
