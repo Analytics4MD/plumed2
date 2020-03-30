@@ -254,7 +254,7 @@ void DispatchAtoms::update()
         {
             DurationMilli round_about_time_ms = timeNow() - t_start;
             auto prev_simulation_time_ms = round_about_time_ms.count() - plumed_time_ms.count();
-            step_simulation_time_ms[current_chunk_id - 1] = prev_simulation_time_ms;
+            step_simulation_time_ms[current_chunk_id] = prev_simulation_time_ms;
             total_simulation_time_ms += prev_simulation_time_ms;
         }
         t_start = timeNow();
@@ -412,21 +412,18 @@ void DispatchAtoms::update()
             printf("total_pyanalyzer_time_ms : %f\n",total_retrieve_time_ms);
             printf("total_read_plumed_data_time_ms : %f\n",total_read_plumed_data_time_ms);
             printf("total_time_steps : %d\n",total_steps);
-
             printf("step_plumed_time_ms : ");
             for (auto step = 0; step < total_chunks; step++)
             {
                 printf(" %f ", step_plumed_time_ms[step]);
             }
             printf("\n"); 
-
             printf("step_simulation_time_ms : ");
             for (auto step = 0; step < total_chunks; step++)
             {
                 printf(" %f ", step_simulation_time_ms[step]);
             }
             printf("\n"); 
-
             printf("step_read_plumed_data_time_ms : ");
             for (auto step = 0; step < total_chunks; step++)
             {
@@ -434,6 +431,7 @@ void DispatchAtoms::update()
             }
             printf("\n"); 
 
+            // Free
             delete[] step_simulation_time_ms;
             delete[] step_plumed_time_ms;
             delete[] step_retrieve_time_ms;
