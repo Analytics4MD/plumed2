@@ -160,18 +160,23 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     checkRead();
     requestAtoms(atoms);
 
-#ifdef BUILT_IN_PERF
     total_chunks = total_steps / nstride + 1;
-    step_simulation_time_ms = new double[total_chunks];
-    step_plumed_time_ms = new double[total_chunks];
-    step_retrieve_time_ms = new double[total_chunks];
-    step_read_plumed_data_time_ms = new double[total_chunks];
-#endif
+
 
     // Get the number of processes
     // Get the rank of the process
     world_size = comm.Get_size();
     world_rank = comm.Get_rank();
+
+#ifdef BUILT_IN_PERF
+    if (world_rank == 0) 
+    {
+        step_simulation_time_ms = new double[total_chunks];
+        step_plumed_time_ms = new double[total_chunks];
+        step_retrieve_time_ms = new double[total_chunks];
+        step_read_plumed_data_time_ms = new double[total_chunks];
+    }
+#endif
 
     // Create sub communicator on root process for DTL 
     int color;
@@ -198,16 +203,14 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
         {
             if(python_module=="NONE") error("TARGET was specified as \"py\", but PYTHON_MODULE was not specified");
             if(python_function=="NONE") error("TARGET was specified as \"py\", but PYTHON_FUNCTION was not specified");
-            if (world_rank == 0)
-            {
-                pyrunner_ptr = new PyRunner((char*)python_module.c_str(), (char*)python_function.c_str());
-            }
+
+            pyrunner_ptr = new PyRunner((char*)python_module.c_str(), (char*)python_function.c_str());
             printf("----===== Initialized PyRunner ====----\n");
+            
             if (data_stage == "dataspaces")
             {
                 dispatch_method = 2;
                 char* temp_var_name = "test_var";
-                unsigned long int total_chunks = total_steps/nstride + 1;// +1 for the first call before starting simulation
                 printf("----===== Initializing DataSpaces Reader and Writer ====----\n");
                 dataspaces_writer_ptr = new DataSpacesWriter(1, temp_var_name, total_chunks, dtl_comm);
                 dataspaces_reader_ptr = new DataSpacesReader(2, temp_var_name, total_chunks, dtl_comm);
@@ -223,7 +226,6 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
             if (data_stage == "dataspaces")
             {
                 char* temp_var_name = "test_var";
-                unsigned long int total_chunks = total_steps/nstride + 1;// +1 for the first call before starting simulation
                 printf("----===== Constructing DataSpacesWriter in Plumed ==========--------\n");
                 
                 dataspaces_writer_ptr = new DataSpacesWriter(1, temp_var_name, total_chunks, dtl_comm);
@@ -306,27 +308,24 @@ void DispatchAtoms::update()
             bool wf3 = true;
             if (dispatch_method==1) // plumed
             {
-                if (world_rank == 0)
-                {
 #ifdef BUILT_IN_PERF
-                    TimeVar t_start_retrieve = timeNow();
+                TimeVar t_start_retrieve = timeNow();
 #endif
-                    pyrunner_ptr->analyze_frame(types,
-                                                x_positions,
-                                                y_positions,
-                                                z_positions,
-                                                lx,
-                                                ly,
-                                                lz,
-                                                xy,
-                                                xz,
-                                                yz,
-                                                step);
+                pyrunner_ptr->analyze_frame(types,
+                                            x_positions,
+                                            y_positions,
+                                            z_positions,
+                                            lx,
+                                            ly,
+                                            lz,
+                                            xy,
+                                            xz,
+                                            yz,
+                                            step);
 #ifdef BUILT_IN_PERF     
-                    DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
-                    total_retrieve_time_ms += retrieve_time_ms.count();
+                DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
+                total_retrieve_time_ms += retrieve_time_ms.count();
 #endif
-                }
             }
             else if (dispatch_method > 1) //plumed_ds
             {
@@ -389,6 +388,7 @@ void DispatchAtoms::update()
                         }
                     }
                 }
+                current_chunk_id++;
             }
             else
                 printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
@@ -438,7 +438,7 @@ void DispatchAtoms::update()
             delete[] step_read_plumed_data_time_ms;   
         }
 #endif
-        current_chunk_id++;
+        
     }
 }
 
@@ -446,12 +446,21 @@ DispatchAtoms::~DispatchAtoms()
 {
     if (world_rank == 0)
     {
-        dataspaces_writer_ptr = NULL;
-        delete dataspaces_writer_ptr;
-        dataspaces_reader_ptr = NULL;
-        delete dataspaces_reader_ptr;
-        pyrunner_ptr = NULL;
-        delete pyrunner_ptr;
+        if (dispatch_method == 2 || dispatch_method == 3) 
+        {
+            //dataspaces_writer_ptr = NULL;
+            delete dataspaces_writer_ptr;
+        }
+        if (dispatch_method == 2) 
+        {
+            //dataspaces_reader_ptr = NULL;
+            delete dataspaces_reader_ptr;
+        }
+        if (dispatch_method == 2 || dispatch_method == 1)
+        {
+            //pyrunner_ptr = NULL;
+            delete pyrunner_ptr;
+        }
     }
 
 }
