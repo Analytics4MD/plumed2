@@ -160,7 +160,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     checkRead();
     requestAtoms(atoms);
 
-    total_chunks = total_steps / nstride + 1;
+    total_chunks = total_steps / nstride;
 
 
     // Get the number of processes
@@ -256,7 +256,7 @@ void DispatchAtoms::update()
         {
             DurationMilli round_about_time_ms = timeNow() - t_start;
             auto prev_simulation_time_ms = round_about_time_ms.count() - plumed_time_ms.count();
-            step_simulation_time_ms[current_chunk_id] = prev_simulation_time_ms;
+            step_simulation_time_ms[current_chunk_id-1] = prev_simulation_time_ms;
             total_simulation_time_ms += prev_simulation_time_ms;
         }
         t_start = timeNow();
@@ -265,147 +265,153 @@ void DispatchAtoms::update()
         TAU_DYNAMIC_TIMER_START("step_plumed_time");
 #endif
 
-        if (dispatch_method > 0)
+        if (step > 0)
         {
+            if (dispatch_method > 0)
+            {
 #ifdef BUILT_IN_PERF
-            TimeVar t_start_read_frame = timeNow();
+                TimeVar t_start_read_frame = timeNow();
 #endif
 #ifdef TAU_PERF
-            TAU_DYNAMIC_TIMER_START("step_read_plumed_data_time");
+                TAU_DYNAMIC_TIMER_START("step_read_plumed_data_time");
 #endif
-            const Tensor & t(getPbc().getBox());
-            double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
-            lx = lenunit*t(0,0);
-            ly = lenunit*t(1,1);
-            lz = lenunit*t(2,2);
-            xy = lenunit*t(0,1); // 0 for orthorhombic
-            xz = lenunit*t(0,2); // 0 for orthorhombic
-            yz = lenunit*t(1,2); // 0 for orthorhombic
+                const Tensor & t(getPbc().getBox());
+                double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
+                lx = lenunit*t(0,0);
+                ly = lenunit*t(1,1);
+                lz = lenunit*t(2,2);
+                xy = lenunit*t(0,1); // 0 for orthorhombic
+                xz = lenunit*t(0,2); // 0 for orthorhombic
+                yz = lenunit*t(1,2); // 0 for orthorhombic
 
-            std::vector<double> x_positions;
-            std::vector<double> y_positions;
-            std::vector<double> z_positions;
-            std::vector<int> types;
+                std::vector<double> x_positions;
+                std::vector<double> y_positions;
+                std::vector<double> z_positions;
+                std::vector<int> types;
 
-            for(int i=0; i<atom_count; ++i) 
-            {
-                double x_position = lenunit*getPosition(i)(0);
-                double y_position = lenunit*getPosition(i)(1);
-                double z_position = lenunit*getPosition(i)(2);
-                x_positions.push_back(lenunit*getPosition(i)(0));
-                y_positions.push_back(lenunit*getPosition(i)(1));
-                z_positions.push_back(lenunit*getPosition(i)(2));
-                types.push_back(0);
-            }
-#ifdef BUILT_IN_PERF
-            DurationMilli read_plumed_data_time_ms = timeNow()-t_start_read_frame;
-            step_read_plumed_data_time_ms[current_chunk_id] = read_plumed_data_time_ms.count();
-            total_read_plumed_data_time_ms += step_read_plumed_data_time_ms[current_chunk_id];
-#endif
-#ifdef TAU_PERF
-            TAU_DYNAMIC_TIMER_STOP("step_read_plumed_data_time");
-#endif
-            bool wf3 = true;
-            if (dispatch_method==1) // plumed
-            {
-#ifdef BUILT_IN_PERF
-                TimeVar t_start_retrieve = timeNow();
-#endif
-                pyrunner_ptr->analyze_frame(types,
-                                            x_positions,
-                                            y_positions,
-                                            z_positions,
-                                            lx,
-                                            ly,
-                                            lz,
-                                            xy,
-                                            xz,
-                                            yz,
-                                            step);
-#ifdef BUILT_IN_PERF     
-                DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
-                total_retrieve_time_ms += retrieve_time_ms.count();
-#endif
-            }
-            else if (dispatch_method > 1) //plumed_ds
-            {
-                MDChunk plmd_chunk(current_chunk_id,
-                                    step,
-                                    types,
-                                    x_positions,
-                                    y_positions,
-                                    z_positions,
-                                    lx,
-                                    ly,
-                                    lz,
-                                    xy,
-                                    xz,
-                                    yz);
-                Chunk* chunk = &plmd_chunk; 
-                std::vector<Chunk*> chunks = {chunk};
-                dataspaces_writer_ptr->write_chunks(chunks);
-                
-                if (dispatch_method == 2)
+                for(int i=0; i<atom_count; ++i) 
                 {
-                    std::vector<Chunk*> in_chunks = dataspaces_reader_ptr->get_chunks(current_chunk_id, current_chunk_id);
-                    for (Chunk* chunk: in_chunks)
-                    {
-                        MDChunk *plmdchunk = dynamic_cast<MDChunk *>(chunk);
-                        auto x_positions = plmdchunk->get_x_positions();
-                        auto y_positions = plmdchunk->get_y_positions();
-                        auto z_positions = plmdchunk->get_z_positions();
-                        auto types_vector = plmdchunk->get_types();
-
-                        double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
-                        lx = plmdchunk->get_box_lx();
-                        ly = plmdchunk->get_box_ly();
-                        lz = plmdchunk->get_box_lz();
-                        xy = plmdchunk->get_box_xy(); // 0 for orthorhombic
-                        xz = plmdchunk->get_box_xz(); // 0 for orthorhombic
-                        yz = plmdchunk->get_box_yz(); // 0 for orthorhombic
-                        int step = plmdchunk->get_timestep();
-
-                        if (world_rank == 0)
-                        {
+                    double x_position = lenunit*getPosition(i)(0);
+                    double y_position = lenunit*getPosition(i)(1);
+                    double z_position = lenunit*getPosition(i)(2);
+                    x_positions.push_back(lenunit*getPosition(i)(0));
+                    y_positions.push_back(lenunit*getPosition(i)(1));
+                    z_positions.push_back(lenunit*getPosition(i)(2));
+                    types.push_back(0);
+                }
 #ifdef BUILT_IN_PERF
-                            TimeVar t_start_retrieve = timeNow();
+                DurationMilli read_plumed_data_time_ms = timeNow()-t_start_read_frame;
+                step_read_plumed_data_time_ms[current_chunk_id-1] = read_plumed_data_time_ms.count();
+                total_read_plumed_data_time_ms += step_read_plumed_data_time_ms[current_chunk_id-1];
 #endif
-                            pyrunner_ptr->analyze_frame(types_vector,
-                                                        x_positions,
-                                                        y_positions,
-                                                        z_positions,
-                                                        lx,
-                                                        ly,
-                                                        lz,
-                                                        xy,
-                                                        xz,
-                                                        yz,                                                    
-                                                        step);
+#ifdef TAU_PERF
+                TAU_DYNAMIC_TIMER_STOP("step_read_plumed_data_time");
+#endif
+                bool wf3 = true;
+                if (dispatch_method==1) // plumed
+                {
 #ifdef BUILT_IN_PERF
-                            DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
-                            total_retrieve_time_ms += retrieve_time_ms.count();
+                    TimeVar t_start_retrieve = timeNow();
+#endif
+                    pyrunner_ptr->analyze_frame(types,
+                                                x_positions,
+                                                y_positions,
+                                                z_positions,
+                                                lx,
+                                                ly,
+                                                lz,
+                                                xy,
+                                                xz,
+                                                yz,
+                                                step);
+#ifdef BUILT_IN_PERF     
+                    DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
+                    total_retrieve_time_ms += retrieve_time_ms.count();
+#endif
+                }
+                else if (dispatch_method > 1) //plumed_ds
+                {
+                    MDChunk plmd_chunk(current_chunk_id-1,
+                                        step,
+                                        types,
+                                        x_positions,
+                                        y_positions,
+                                        z_positions,
+                                        lx,
+                                        ly,
+                                        lz,
+                                        xy,
+                                        xz,
+                                        yz);
+                    Chunk* chunk = &plmd_chunk; 
+                    std::vector<Chunk*> chunks = {chunk};
+                    dataspaces_writer_ptr->write_chunks(chunks);
+                    
+                    if (dispatch_method == 2)
+                    {
+                        std::vector<Chunk*> in_chunks = dataspaces_reader_ptr->get_chunks(current_chunk_id-1, current_chunk_id-1);
+                        for (Chunk* chunk: in_chunks)
+                        {
+                            MDChunk *plmdchunk = dynamic_cast<MDChunk *>(chunk);
+                            auto x_positions = plmdchunk->get_x_positions();
+                            auto y_positions = plmdchunk->get_y_positions();
+                            auto z_positions = plmdchunk->get_z_positions();
+                            auto types_vector = plmdchunk->get_types();
+
+                            double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
+                            lx = plmdchunk->get_box_lx();
+                            ly = plmdchunk->get_box_ly();
+                            lz = plmdchunk->get_box_lz();
+                            xy = plmdchunk->get_box_xy(); // 0 for orthorhombic
+                            xz = plmdchunk->get_box_xz(); // 0 for orthorhombic
+                            yz = plmdchunk->get_box_yz(); // 0 for orthorhombic
+                            int step = plmdchunk->get_timestep();
+
+                            if (world_rank == 0)
+                            {
+#ifdef BUILT_IN_PERF
+                                TimeVar t_start_retrieve = timeNow();
+#endif
+                                pyrunner_ptr->analyze_frame(types_vector,
+                                                            x_positions,
+                                                            y_positions,
+                                                            z_positions,
+                                                            lx,
+                                                            ly,
+                                                            lz,
+                                                            xy,
+                                                            xz,
+                                                            yz,                                                    
+                                                            step);
+#ifdef BUILT_IN_PERF
+                                DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
+                                total_retrieve_time_ms += retrieve_time_ms.count();
 #endif                            
+                            }
                         }
                     }
                 }
-                current_chunk_id++;
+                else
+                    printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
             }
             else
-                printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
+                    printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
         }
-        else
-                printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
 
 #ifdef BUILT_IN_PERF
         plumed_time_ms = timeNow()-t_start;
-        step_plumed_time_ms[current_chunk_id] = plumed_time_ms.count();
-        total_plumed_time_ms += step_plumed_time_ms[current_chunk_id];       
+        if (step > 0) 
+        {
+            step_plumed_time_ms[current_chunk_id-1] = plumed_time_ms.count();
+            total_plumed_time_ms += step_plumed_time_ms[current_chunk_id-1];       
+        }
 #endif      
 #ifdef TAU_PERF
-        TAU_DYNAMIC_TIMER_STOP("step_plumed_time");
-#endif  
+            TAU_DYNAMIC_TIMER_STOP("step_plumed_time");
+#endif 
+        current_chunk_id++;
 #ifdef BUILT_IN_PERF
-        if (step == total_steps)
+        if (step == total_chunks * nstride)
         {
             printf("total_plumed_time_ms : %f\n",total_plumed_time_ms);
             printf("total_simulation_time_ms : %f\n",total_simulation_time_ms);
