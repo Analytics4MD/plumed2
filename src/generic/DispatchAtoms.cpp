@@ -91,8 +91,8 @@ class DispatchAtoms:
 #endif
     int world_size;
     int world_rank;
-#ifdef BUILT_IN_PERF
     int total_chunks = 0;
+#ifdef BUILT_IN_PERF
     double total_simulation_time_ms = 0.0;
     double simulation_time_ms = 0.0;
     double total_plumed_time_ms = 0.0;
@@ -250,7 +250,7 @@ void DispatchAtoms::update()
         int atom_count = getNumberOfAtoms();
         auto step = getStep(); 
         printf("----===== DispatchAtoms::update() Dispatch step: %i Number of atoms being dispatched: %d Rank: %d nprocs: %d =====---\n", step, atom_count, world_rank, world_size);
-
+        printf("current_chunk_id = %d\n", current_chunk_id);
 #ifdef BUILT_IN_PERF
         if (step > 0)
         {
