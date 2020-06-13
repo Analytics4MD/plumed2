@@ -37,7 +37,7 @@
 #include "core/ActionSet.h"
 
 // A4MD headersy
-#include "py_runner.h"
+#include "md_runner.h"
 #include "dataspaces_writer.h"
 #include "dataspaces_reader.h"
 #include "chunk.h"
@@ -204,16 +204,15 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
             if(python_module=="NONE") error("TARGET was specified as \"py\", but PYTHON_MODULE was not specified");
             if(python_function=="NONE") error("TARGET was specified as \"py\", but PYTHON_FUNCTION was not specified");
 
-            pyrunner_ptr = new PyRunner((char*)python_module.c_str(), (char*)python_function.c_str());
+            pyrunner_ptr = new MDRunner((char*)python_module.c_str(), (char*)python_function.c_str());
             printf("----===== Initialized PyRunner ====----\n");
             
             if (data_stage == "dataspaces")
             {
                 dispatch_method = 2;
-                char* temp_var_name = "test_var";
                 printf("----===== Initializing DataSpaces Reader and Writer ====----\n");
-                dataspaces_writer_ptr = new DataSpacesWriter(1, temp_var_name, total_chunks, dtl_comm);
-                dataspaces_reader_ptr = new DataSpacesReader(2, temp_var_name, total_chunks, dtl_comm);
+                dataspaces_writer_ptr = new DataSpacesWriter(1, 1, total_chunks, dtl_comm);
+                dataspaces_reader_ptr = new DataSpacesReader(2, 1, total_chunks, dtl_comm);
                 printf("----===== Initialized DataSpaces Reader and Writer ====----\n");
             }
             else
@@ -228,7 +227,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
                 char* temp_var_name = "test_var";
                 printf("----===== Constructing DataSpacesWriter in Plumed ==========--------\n");
                 
-                dataspaces_writer_ptr = new DataSpacesWriter(1, temp_var_name, total_chunks, dtl_comm);
+                dataspaces_writer_ptr = new DataSpacesWriter(1, 1, total_chunks, dtl_comm);
                 dispatch_method = 3;
             }
             else
@@ -299,6 +298,19 @@ void DispatchAtoms::update()
                     z_positions.push_back(lenunit*getPosition(i)(2));
                     types.push_back(0);
                 }
+
+                Chunk* chunk = new MDChunk(current_chunk_id-1,
+                                        step,
+                                        types,
+                                        x_positions,
+                                        y_positions,
+                                        z_positions,
+                                        lx,
+                                        ly,
+                                        lz,
+                                        xy,
+                                        xz,
+                                        yz);
 #ifdef BUILT_IN_PERF
                 DurationMilli read_plumed_data_time_ms = timeNow()-t_start_read_frame;
                 step_read_plumed_data_time_ms[current_chunk_id-1] = read_plumed_data_time_ms.count();
@@ -313,17 +325,7 @@ void DispatchAtoms::update()
 #ifdef BUILT_IN_PERF
                     TimeVar t_start_retrieve = timeNow();
 #endif
-                    pyrunner_ptr->analyze_frame(types,
-                                                x_positions,
-                                                y_positions,
-                                                z_positions,
-                                                lx,
-                                                ly,
-                                                lz,
-                                                xy,
-                                                xz,
-                                                yz,
-                                                step);
+                    pyrunner_ptr->input_chunk(chunk);
 #ifdef BUILT_IN_PERF     
                     DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
                     total_retrieve_time_ms += retrieve_time_ms.count();
@@ -331,71 +333,35 @@ void DispatchAtoms::update()
                 }
                 else if (dispatch_method > 1) //plumed_ds
                 {
-                    MDChunk plmd_chunk(current_chunk_id-1,
-                                        step,
-                                        types,
-                                        x_positions,
-                                        y_positions,
-                                        z_positions,
-                                        lx,
-                                        ly,
-                                        lz,
-                                        xy,
-                                        xz,
-                                        yz);
-                    Chunk* chunk = &plmd_chunk; 
                     std::vector<Chunk*> chunks = {chunk};
                     dataspaces_writer_ptr->write_chunks(chunks);
                     
                     if (dispatch_method == 2)
                     {
-                        std::vector<Chunk*> in_chunks = dataspaces_reader_ptr->get_chunks(current_chunk_id-1, current_chunk_id-1);
+                        std::vector<Chunk*> in_chunks = dataspaces_reader_ptr->read_chunks(current_chunk_id-1, current_chunk_id-1);
                         for (Chunk* chunk: in_chunks)
                         {
-                            MDChunk *plmdchunk = dynamic_cast<MDChunk *>(chunk);
-                            auto x_positions = plmdchunk->get_x_positions();
-                            auto y_positions = plmdchunk->get_y_positions();
-                            auto z_positions = plmdchunk->get_z_positions();
-                            auto types_vector = plmdchunk->get_types();
-
-                            double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
-                            lx = plmdchunk->get_box_lx();
-                            ly = plmdchunk->get_box_ly();
-                            lz = plmdchunk->get_box_lz();
-                            xy = plmdchunk->get_box_xy(); // 0 for orthorhombic
-                            xz = plmdchunk->get_box_xz(); // 0 for orthorhombic
-                            yz = plmdchunk->get_box_yz(); // 0 for orthorhombic
-                            int step = plmdchunk->get_timestep();
-
-                            if (world_rank == 0)
-                            {
 #ifdef BUILT_IN_PERF
-                                TimeVar t_start_retrieve = timeNow();
+                            TimeVar t_start_retrieve = timeNow();
 #endif
-                                pyrunner_ptr->analyze_frame(types_vector,
-                                                            x_positions,
-                                                            y_positions,
-                                                            z_positions,
-                                                            lx,
-                                                            ly,
-                                                            lz,
-                                                            xy,
-                                                            xz,
-                                                            yz,                                                    
-                                                            step);
+                            pyrunner_ptr->input_chunk(chunk);
 #ifdef BUILT_IN_PERF
-                                DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
-                                total_retrieve_time_ms += retrieve_time_ms.count();
+                            DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
+                            total_retrieve_time_ms += retrieve_time_ms.count();
 #endif                            
-                            }
                         }
                     }
                 }
                 else
+                {
                     printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
+                }
+                //delete chunk;
             }
             else
-                    printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
+            {
+                printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
+            }
         }
 
 #ifdef BUILT_IN_PERF
