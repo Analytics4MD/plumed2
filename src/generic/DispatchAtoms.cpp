@@ -82,8 +82,8 @@ class DispatchAtoms:
 {
     double lenunit;
     PyRunner* pyrunner_ptr;
-    DataSpacesWriter* dataspaces_writer_ptr;
-    DataSpacesReader* dataspaces_reader_ptr;
+    ChunkWriter* dataspaces_writer_ptr;
+    ChunkReader* dataspaces_reader_ptr;
     //PlumedChunker* chunker_ptr;
     int dispatch_method = 0; // 1: a4md, 2:python 
 #if defined(__PLUMED_DOES_LICHENS_DISPATCH)
@@ -134,6 +134,8 @@ void DispatchAtoms::registerKeywords( Keywords& keys ) {
     keys.add("compulsory", "PYTHON_MODULE", "NONE", "name of the python module to load and execute the analysis code. Applicable only if TARGET is a .py file");
     keys.add("compulsory", "PYTHON_FUNCTION", "NONE", "name of the python module to load and execute the analysis code. Applicable only if TARGET is a .py file");
     keys.add("compulsory", "UNITS","PLUMED","the units in which to print out the coordinates. PLUMED means internal PLUMED units");
+    keys.add("compulsory", "CLIENT_ID","0","Dataspaces client ID. Applicable only if STAGE_DATA_IN is dataspaces");
+    keys.add("compulsory", "GROUP_ID","0","Dataspaces group ID. Applicable only if STAGE_DATA_IN is dataspaces");
 }
 
 DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
@@ -148,11 +150,16 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     parse("PYTHON_MODULE",python_module);
     parse("PYTHON_FUNCTION",python_function);
     nstride = getStride();
+    int client_id, group_id;
+    parse("CLIENT_ID",client_id);
+    parse("GROUP_ID",group_id);
+
     // Print out to log
     log.printf("TOTAL_STEPS: %i\n",total_steps);
     log.printf("STRIDE: %i\n",nstride);
     log.printf("TARGET: %s\n",target.c_str());
-    log.printf("PYTHON_FUNCTION: %s\n",python_function.c_str());
+    log.printf("CLIENT_ID: %i\n",client_id);
+    log.printf("GROUP_ID: %i\n",group_id);
     
     parseAtomList("ATOMS",atoms);
     std::string unitname; parse("UNITS",unitname);
@@ -227,7 +234,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
                 char* temp_var_name = "test_var";
                 printf("----===== Constructing DataSpacesWriter in Plumed ==========--------\n");
                 
-                dataspaces_writer_ptr = new DataSpacesWriter(1, 1, total_chunks, dtl_comm);
+                dataspaces_writer_ptr = new DataSpacesWriter(client_id, group_id, total_chunks, dtl_comm);
                 dispatch_method = 3;
             }
             else
@@ -356,7 +363,6 @@ void DispatchAtoms::update()
                 {
                     printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
                 }
-                //delete chunk;
             }
             else
             {
