@@ -39,6 +39,10 @@
 // A4MD headersy
 #include "md_runner.h"
 #include "dataspaces_writer.h"
+// #ifdef DTL_DECAF
+#include "decaf_writer.h"
+#include <bredala/data_model/boost_macros.h>
+// #endif
 #include "dataspaces_reader.h"
 #include "chunk.h"
 #include "timer.h"
@@ -91,6 +95,8 @@ class DispatchAtoms:
 #endif
     int world_size;
     int world_rank;
+    int app_rank;
+    int dtl_rank;
     int total_chunks = 0;
 #ifdef BUILT_IN_PERF
     double total_simulation_time_ms = 0.0;
@@ -136,6 +142,7 @@ void DispatchAtoms::registerKeywords( Keywords& keys ) {
     keys.add("compulsory", "UNITS","PLUMED","the units in which to print out the coordinates. PLUMED means internal PLUMED units");
     keys.add("compulsory", "CLIENT_ID","0","Dataspaces client ID. Applicable only if STAGE_DATA_IN is dataspaces");
     keys.add("compulsory", "GROUP_ID","0","Dataspaces group ID. Applicable only if STAGE_DATA_IN is dataspaces");
+    keys.add("compulsory", "JSON_CONF","decaf.json","Decaf JSON configuration. Applicable only if STAGE_DATA_IN is decaf");
 }
 
 DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
@@ -153,6 +160,12 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     int client_id, group_id;
     parse("CLIENT_ID",client_id);
     parse("GROUP_ID",group_id);
+    string json_conf;
+    parse("JSON_CONF", json_conf);
+    printf("PYTHON_MODULE: %s\n", python_module.c_str());
+    printf("TARGET: %s\n", target.c_str());
+    printf("STAGE_DATA_IN: %s\n", data_stage.c_str());
+    printf("JSON_CONF: %s\n", json_conf.c_str());
 
     // Print out to log
     log.printf("TOTAL_STEPS: %i\n",total_steps);
@@ -172,37 +185,27 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
 
     // Get the number of processes
     // Get the rank of the process
-    world_size = comm.Get_size();
     world_rank = comm.Get_rank();
+    world_size = comm.Get_size();
 
-#ifdef BUILT_IN_PERF
-    if (world_rank == 0) 
+    app_rank = world_rank;
+    int color = (app_rank < 1) ? 0 : 1;
+    int rank;
+    PMPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm dtl_comm;
+    PMPI_Comm_split(MPI_COMM_WORLD, color, rank, &dtl_comm);
+    PMPI_Comm_rank(dtl_comm, &dtl_rank);
+    printf("rank = %d app_rank = %d dtl_rank = %d\n", rank, app_rank, dtl_rank);
+    if (app_rank == 0)
     {
+#ifdef BUILT_IN_PERF
         step_simulation_time_ms = new double[total_chunks];
         step_plumed_time_ms = new double[total_chunks];
         step_retrieve_time_ms = new double[total_chunks];
         step_read_plumed_data_time_ms = new double[total_chunks];
-    }
 #endif
 
-    // Create sub communicator on root process for DTL 
-    int color;
-    if (world_rank == 0) 
-    {
-        color = 0;
-    } 
-    else
-    {
-        color = 1; 
-    }
-    MPI_Comm dtl_comm;
-    MPI_Comm_split(comm.Get_comm(), color, world_rank, &dtl_comm);
-
-    if (world_rank == 0)
-    {
-        int dtl_rank;
-        MPI_Comm_rank(dtl_comm, &dtl_rank);
-        printf("----===== Constructing PLUMED DispatchAtomsAction world_rank :%i, nprocs :%i dtl_rank : %d \n",world_rank,world_size, dtl_rank);
+        printf("----===== Constructing PLUMED DispatchAtomsAction world_size : %i, world_rank : %i, app_rank : %i, dtl_rank : %d \n", world_size, world_rank, app_rank, dtl_rank);
 
         if(target == "NONE") error("name out output target was not specified");
 
@@ -213,7 +216,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
 
             pyrunner_ptr = new MDRunner((char*)python_module.c_str(), (char*)python_function.c_str());
             printf("----===== Initialized PyRunner ====----\n");
-            
+         
             if (data_stage == "dataspaces")
             {
                 dispatch_method = 2;
@@ -231,12 +234,18 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
         {
             if (data_stage == "dataspaces")
             {
-                char* temp_var_name = "test_var";
                 printf("----===== Constructing DataSpacesWriter in Plumed ==========--------\n");
-                
+             
                 dataspaces_writer_ptr = new DataSpacesWriter(client_id, group_id, total_chunks, dtl_comm);
                 dispatch_method = 3;
             }
+// #ifdef DTL_DECAF
+            else if (data_stage == "decaf")
+            {
+                dataspaces_writer_ptr = new DecafWriter(json_conf, total_chunks, dtl_comm);
+                dispatch_method = 3;
+            }
+// #endif
             else
                 printf("Invalid option for target = a4md. Currently USE_DATASPACES is the only valid option for a4md target.");
         }
@@ -245,17 +254,17 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     }
 }
 
-#ifdef BUILT_IN_PERF
-TimeVar t_start;
-DurationMilli plumed_time_ms;
-#endif
+//#ifdef BUILT_IN_PERF
+//TimeVar t_start;
+//DurationMilli plumed_time_ms;
+//#endif
 void DispatchAtoms::update() 
 {
-    if (world_rank == 0)
+    if (app_rank == 0)
     {
         int atom_count = getNumberOfAtoms();
         auto step = getStep(); 
-        printf("----===== DispatchAtoms::update() Dispatch step: %i Number of atoms being dispatched: %d Rank: %d nprocs: %d =====---\n", step, atom_count, world_rank, world_size);
+        printf("----===== DispatchAtoms::update() Dispatch step: %i Number of atoms being dispatched: %d world_rank : %d, app_rank : %d, dtl_rank : %d =====---\n", step, atom_count, world_rank, app_rank, dtl_rank);
         printf("current_chunk_id = %d\n", current_chunk_id);
 #ifdef BUILT_IN_PERF
         if (step > 0)
@@ -342,7 +351,7 @@ void DispatchAtoms::update()
                 {
                     std::vector<Chunk*> chunks = {chunk};
                     dataspaces_writer_ptr->write_chunks(chunks);
-                    
+                 
                     if (dispatch_method == 2)
                     {
                         std::vector<Chunk*> in_chunks = dataspaces_reader_ptr->read_chunks(current_chunk_id-1, current_chunk_id-1);
@@ -415,16 +424,15 @@ void DispatchAtoms::update()
             delete[] step_retrieve_time_ms;
             delete[] step_read_plumed_data_time_ms;   
         }
-#endif
-        
+#endif   
     }
 }
 
 DispatchAtoms::~DispatchAtoms() 
 {
-    if (world_rank == 0)
+    if (app_rank == 0)
     {
-        if (dispatch_method == 2 || dispatch_method == 3) 
+        if (dispatch_method == 2 || dispatch_method == 3 || dispatch_method == 4) 
         {
             //dataspaces_writer_ptr = NULL;
             delete dataspaces_writer_ptr;
@@ -440,7 +448,6 @@ DispatchAtoms::~DispatchAtoms()
             delete pyrunner_ptr;
         }
     }
-
 }
 } /* namespace generic */
 } /* namespace PLMD */
