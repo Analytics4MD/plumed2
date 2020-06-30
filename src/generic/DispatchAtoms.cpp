@@ -162,17 +162,16 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     parse("GROUP_ID",group_id);
     string json_conf;
     parse("JSON_CONF", json_conf);
-    printf("PYTHON_MODULE: %s\n", python_module.c_str());
-    printf("TARGET: %s\n", target.c_str());
-    printf("STAGE_DATA_IN: %s\n", data_stage.c_str());
-    printf("JSON_CONF: %s\n", json_conf.c_str());
 
     // Print out to log
     log.printf("TOTAL_STEPS: %i\n",total_steps);
     log.printf("STRIDE: %i\n",nstride);
     log.printf("TARGET: %s\n",target.c_str());
+    log.printf("PYTHON_MODULE: %s\n", python_module.c_str());
+    log.printf("STAGE_DATA_IN: %s\n", data_stage.c_str());
     log.printf("CLIENT_ID: %i\n",client_id);
     log.printf("GROUP_ID: %i\n",group_id);
+    log.printf("JSON_CONF: %s\n", json_conf.c_str());
     
     parseAtomList("ATOMS",atoms);
     std::string unitname; parse("UNITS",unitname);
@@ -182,12 +181,10 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
 
     total_chunks = total_steps / nstride;
 
-
     // Get the number of processes
     // Get the rank of the process
-    world_rank = comm.Get_rank();
     world_size = comm.Get_size();
-
+    world_rank = comm.Get_rank();
     app_rank = world_rank;
     int color = (app_rank < 1) ? 0 : 1;
     int rank;
@@ -235,7 +232,6 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
             if (data_stage == "dataspaces")
             {
                 printf("----===== Constructing DataSpacesWriter in Plumed ==========--------\n");
-             
                 dataspaces_writer_ptr = new DataSpacesWriter(client_id, group_id, total_chunks, dtl_comm);
                 dispatch_method = 3;
             }
@@ -254,10 +250,10 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     }
 }
 
-//#ifdef BUILT_IN_PERF
-//TimeVar t_start;
-//DurationMilli plumed_time_ms;
-//#endif
+#ifdef BUILT_IN_PERF
+TimeVar t_start;
+DurationMilli plumed_time_ms;
+#endif
 void DispatchAtoms::update() 
 {
     if (app_rank == 0)
