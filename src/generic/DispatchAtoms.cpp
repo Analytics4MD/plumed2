@@ -30,7 +30,6 @@
 #include <memory>
 #include <vector>
 #include <tuple>
-// #include <chrono>
 #include <string>
 
 #include "core/SetupMolInfo.h"
@@ -55,10 +54,6 @@
 #if defined(__PLUMED_DOES_LICHENS_DISPATCH)
 //#include <lichenstarget/lichens_target.h>
 #endif
-
-// typedef std::chrono::high_resolution_clock::time_point TimeVar;
-// typedef std::chrono::duration<double, std::milli> DurationMilli;
-// #define timeNow() std::chrono::high_resolution_clock::now()
 
 using namespace std;
 
@@ -184,65 +179,45 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
         step_read_plumed_data_time_ms = new double[total_chunks];
     }
 #endif
+    
+    printf("----===== Constructing PLUMED DispatchAtomsAction world_rank :%i, nprocs :%i\n", world_rank, world_size);
 
-    // Create sub communicator on root process for DTL 
-    int color;
-    if (world_rank == 0) 
+    if(target == "NONE") error("name out output target was not specified");
+
+    if (target == "py")
     {
-        color = 0;
-    } 
-    else
-    {
-        color = 1; 
-    }
-    MPI_Comm dtl_comm;
-    MPI_Comm_split(comm.Get_comm(), color, world_rank, &dtl_comm);
+        if(python_module=="NONE") error("TARGET was specified as \"py\", but PYTHON_MODULE was not specified");
+        if(python_function=="NONE") error("TARGET was specified as \"py\", but PYTHON_FUNCTION was not specified");
 
-    if (world_rank == 0)
-    {
-        int dtl_rank;
-        MPI_Comm_rank(dtl_comm, &dtl_rank);
-        printf("----===== Constructing PLUMED DispatchAtomsAction world_rank :%i, nprocs :%i dtl_rank : %d \n",world_rank,world_size, dtl_rank);
-
-        if(target == "NONE") error("name out output target was not specified");
-
-        if (target == "py")
+        pyrunner_ptr = new MDRunner((char*)python_module.c_str(), (char*)python_function.c_str());
+        printf("----===== Initialized PyRunner ====----\n");
+        
+        if (data_stage == "dataspaces")
         {
-            if(python_module=="NONE") error("TARGET was specified as \"py\", but PYTHON_MODULE was not specified");
-            if(python_function=="NONE") error("TARGET was specified as \"py\", but PYTHON_FUNCTION was not specified");
-
-            pyrunner_ptr = new MDRunner((char*)python_module.c_str(), (char*)python_function.c_str());
-            printf("----===== Initialized PyRunner ====----\n");
-            
-            if (data_stage == "dataspaces")
-            {
-                dispatch_method = 2;
-                printf("----===== Initializing DataSpaces Reader and Writer ====----\n");
-                dataspaces_writer_ptr = new DataSpacesWriter(1, 1, total_chunks, dtl_comm);
-                dataspaces_reader_ptr = new DataSpacesReader(2, 1, total_chunks, dtl_comm);
-                printf("----===== Initialized DataSpaces Reader and Writer ====----\n");
-            }
-            else
-            { 
-                dispatch_method = 1;
-            }
-        }
-        else if (target == "a4md")
-        {
-            if (data_stage == "dataspaces")
-            {
-                char* temp_var_name = "test_var";
-                printf("----===== Constructing DataSpacesWriter in Plumed ==========--------\n");
-                
-                dataspaces_writer_ptr = new DataSpacesWriter(client_id, group_id, total_chunks, dtl_comm);
-                dispatch_method = 3;
-            }
-            else
-                printf("Invalid option for target = a4md. Currently USE_DATASPACES is the only valid option for a4md target.");
+            dispatch_method = 2;
+            printf("----===== Initializing DataSpaces Reader and Writer ====----\n");
+            dataspaces_writer_ptr = new DataSpacesWriter(1, 1, total_chunks, comm.Get_comm());
+            dataspaces_reader_ptr = new DataSpacesReader(2, 1, total_chunks, comm.Get_comm());
+            printf("----===== Initialized DataSpaces Reader and Writer ====----\n");
         }
         else
-            printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
+        { 
+            dispatch_method = 1;
+        }
     }
+    else if (target == "a4md")
+    {
+        if (data_stage == "dataspaces")
+        {
+            printf("----===== Constructing DataSpacesWriter in Plumed ==========--------\n");          
+            dataspaces_writer_ptr = new DataSpacesWriter(client_id, group_id, total_chunks, comm.Get_comm());
+            dispatch_method = 3;
+        }
+        else
+            printf("Invalid option for target = a4md. Currently USE_DATASPACES is the only valid option for a4md target.");
+    }
+    else
+        printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
 }
 
 #ifdef BUILT_IN_PERF
@@ -251,13 +226,14 @@ DurationMilli plumed_time_ms;
 #endif
 void DispatchAtoms::update() 
 {
+    int atom_count = getNumberOfAtoms();
+    auto step = getStep(); 
+    printf("----===== DispatchAtoms::update() Dispatch step: %i Number of atoms being dispatched: %d Rank: %d nprocs: %d =====---\n", step, atom_count, world_rank, world_size);
+    printf("current_chunk_id = %d\n", current_chunk_id);
+
+#ifdef BUILT_IN_PERF
     if (world_rank == 0)
     {
-        int atom_count = getNumberOfAtoms();
-        auto step = getStep(); 
-        printf("----===== DispatchAtoms::update() Dispatch step: %i Number of atoms being dispatched: %d Rank: %d nprocs: %d =====---\n", step, atom_count, world_rank, world_size);
-        printf("current_chunk_id = %d\n", current_chunk_id);
-#ifdef BUILT_IN_PERF
         if (step > 0)
         {
             DurationMilli round_about_time_ms = timeNow() - t_start;
@@ -266,102 +242,122 @@ void DispatchAtoms::update()
             total_simulation_time_ms += prev_simulation_time_ms;
         }
         t_start = timeNow();
+    }
 #endif
 #ifdef TAU_PERF
+    if (world_rank == 0)
+    {
         TAU_DYNAMIC_TIMER_START("step_plumed_time");
+    }
 #endif
 
-        if (step > 0)
+    if (step > 0)
+    {
+        if (dispatch_method > 0)
         {
-            if (dispatch_method > 0)
-            {
 #ifdef BUILT_IN_PERF
+            if (world_rank == 0)
+            {
                 TimeVar t_start_read_frame = timeNow();
+            }
 #endif
 #ifdef TAU_PERF
+            if (world_rank == 0) 
+            {
                 TAU_DYNAMIC_TIMER_START("step_read_plumed_data_time");
+            }
 #endif
-                const Tensor & t(getPbc().getBox());
-                double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
-                lx = lenunit*t(0,0);
-                ly = lenunit*t(1,1);
-                lz = lenunit*t(2,2);
-                xy = lenunit*t(0,1); // 0 for orthorhombic
-                xz = lenunit*t(0,2); // 0 for orthorhombic
-                yz = lenunit*t(1,2); // 0 for orthorhombic
-
-                std::vector<double> x_positions;
-                std::vector<double> y_positions;
-                std::vector<double> z_positions;
-                std::vector<int> types;
-
-                for(int i=0; i<atom_count; ++i) 
-                {
-                    double x_position = lenunit*getPosition(i)(0);
-                    double y_position = lenunit*getPosition(i)(1);
-                    double z_position = lenunit*getPosition(i)(2);
-                    x_positions.push_back(lenunit*getPosition(i)(0));
-                    y_positions.push_back(lenunit*getPosition(i)(1));
-                    z_positions.push_back(lenunit*getPosition(i)(2));
-                    types.push_back(0);
-                }
-
-                Chunk* chunk = new MDChunk(current_chunk_id-1,
-                                        step,
-                                        types,
-                                        x_positions,
-                                        y_positions,
-                                        z_positions,
-                                        lx,
-                                        ly,
-                                        lz,
-                                        xy,
-                                        xz,
-                                        yz);
+            const Tensor & t(getPbc().getBox());
+            double lx, ly, lz, xy, xz, yz; //xy, xz, yz are tilt factors 
+            lx = lenunit*t(0,0);
+            ly = lenunit*t(1,1);
+            lz = lenunit*t(2,2);
+            xy = lenunit*t(0,1); // 0 for orthorhombic
+            xz = lenunit*t(0,2); // 0 for orthorhombic
+            yz = lenunit*t(1,2); // 0 for orthorhombic
+            std::vector<double> x_positions;
+            std::vector<double> y_positions;
+            std::vector<double> z_positions;
+            std::vector<int> types;
+            for(int i=0; i<atom_count; ++i) 
+            {
+                double x_position = lenunit*getPosition(i)(0);
+                double y_position = lenunit*getPosition(i)(1);
+                double z_position = lenunit*getPosition(i)(2);
+                x_positions.push_back(lenunit*getPosition(i)(0));
+                y_positions.push_back(lenunit*getPosition(i)(1));
+                z_positions.push_back(lenunit*getPosition(i)(2));
+                types.push_back(0);
+            }
+            Chunk* chunk = new MDChunk(current_chunk_id-1,
+                                    step,
+                                    types,
+                                    x_positions,
+                                    y_positions,
+                                    z_positions,
+                                    lx,
+                                    ly,
+                                    lz,
+                                    xy,
+                                    xz,
+                                    yz);
 #ifdef BUILT_IN_PERF
+            if (world_rank == 0)
+            {
                 DurationMilli read_plumed_data_time_ms = timeNow()-t_start_read_frame;
                 step_read_plumed_data_time_ms[current_chunk_id-1] = read_plumed_data_time_ms.count();
                 total_read_plumed_data_time_ms += step_read_plumed_data_time_ms[current_chunk_id-1];
+            }
 #endif
 #ifdef TAU_PERF
+            if (world_rank == 0) 
+            {
                 TAU_DYNAMIC_TIMER_STOP("step_read_plumed_data_time");
+            }
 #endif
-                bool wf3 = true;
-                if (dispatch_method==1) // plumed
-                {
+            bool wf3 = true;
+            if (dispatch_method==1) // plumed
+            {
 #ifdef BUILT_IN_PERF
+                if (world_rank == 0)
+                {
                     TimeVar t_start_retrieve = timeNow();
+                }
 #endif
-                    pyrunner_ptr->input_chunk(chunk);
-#ifdef BUILT_IN_PERF     
+                pyrunner_ptr->input_chunk(chunk);
+#ifdef BUILT_IN_PERF
+                if (world_rank == 0)
+                {
                     DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
                     total_retrieve_time_ms += retrieve_time_ms.count();
-#endif
                 }
-                else if (dispatch_method > 1) //plumed_ds
-                {
-                    std::vector<Chunk*> chunks = {chunk};
-                    dataspaces_writer_ptr->write_chunks(chunks);
-                    
-                    if (dispatch_method == 2)
-                    {
-                        std::vector<Chunk*> in_chunks = dataspaces_reader_ptr->read_chunks(current_chunk_id-1, current_chunk_id-1);
-                        for (Chunk* chunk: in_chunks)
-                        {
-#ifdef BUILT_IN_PERF
-                            TimeVar t_start_retrieve = timeNow();
 #endif
-                            pyrunner_ptr->input_chunk(chunk);
+            }
+            else if (dispatch_method > 1) //plumed_ds
+            {
+                std::vector<Chunk*> chunks = {chunk};
+                dataspaces_writer_ptr->write_chunks(chunks);
+                
+                if (dispatch_method == 2)
+                {
+                    std::vector<Chunk*> in_chunks = dataspaces_reader_ptr->read_chunks(current_chunk_id-1, current_chunk_id-1);
+                    for (Chunk* chunk: in_chunks)
+                    {
 #ifdef BUILT_IN_PERF
+                        if (world_rank == 0)
+                        {
+                            TimeVar t_start_retrieve = timeNow();
+                        }
+#endif
+                        pyrunner_ptr->input_chunk(chunk);
+#ifdef BUILT_IN_PERF
+                        if (world_rank == 0)
+                        {
                             DurationMilli retrieve_time_ms = timeNow()-t_start_retrieve;
                             total_retrieve_time_ms += retrieve_time_ms.count();
-#endif                            
                         }
+#endif                            
                     }
-                }
-                else
-                {
-                    printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
                 }
             }
             else
@@ -369,20 +365,33 @@ void DispatchAtoms::update()
                 printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
             }
         }
+        else
+        {
+            printf(" ERROR: Unknown TARGET specified in DispatchAtoms Action.\n");
+        }
+    }
 
 #ifdef BUILT_IN_PERF
+    if (world_rank == 0)
+    {
         plumed_time_ms = timeNow()-t_start;
         if (step > 0) 
         {
             step_plumed_time_ms[current_chunk_id-1] = plumed_time_ms.count();
             total_plumed_time_ms += step_plumed_time_ms[current_chunk_id-1];       
         }
+    }
 #endif      
 #ifdef TAU_PERF
-            TAU_DYNAMIC_TIMER_STOP("step_plumed_time");
+    if (world_rank == 0) 
+    {
+        TAU_DYNAMIC_TIMER_STOP("step_plumed_time");
+    }
 #endif 
-        current_chunk_id++;
+    current_chunk_id++;
 #ifdef BUILT_IN_PERF
+    if (world_rank == 0)
+    {
         if (step == total_chunks * nstride)
         {
             printf("total_plumed_time_ms : %f\n",total_plumed_time_ms);
@@ -415,32 +424,27 @@ void DispatchAtoms::update()
             delete[] step_retrieve_time_ms;
             delete[] step_read_plumed_data_time_ms;   
         }
-#endif
-        
     }
+#endif
 }
 
 DispatchAtoms::~DispatchAtoms() 
 {
-    if (world_rank == 0)
+    if (dispatch_method == 2 || dispatch_method == 3) 
     {
-        if (dispatch_method == 2 || dispatch_method == 3) 
-        {
-            //dataspaces_writer_ptr = NULL;
-            delete dataspaces_writer_ptr;
-        }
-        if (dispatch_method == 2) 
-        {
-            //dataspaces_reader_ptr = NULL;
-            delete dataspaces_reader_ptr;
-        }
-        if (dispatch_method == 2 || dispatch_method == 1)
-        {
-            //pyrunner_ptr = NULL;
-            delete pyrunner_ptr;
-        }
+        //dataspaces_writer_ptr = NULL;
+        delete dataspaces_writer_ptr;
     }
-
+    if (dispatch_method == 2) 
+    {
+        //dataspaces_reader_ptr = NULL;
+        delete dataspaces_reader_ptr;
+    }
+    if (dispatch_method == 2 || dispatch_method == 1)
+    {
+        //pyrunner_ptr = NULL;
+        delete pyrunner_ptr;
+    }
 }
 } /* namespace generic */
 } /* namespace PLMD */
