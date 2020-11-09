@@ -169,7 +169,6 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
 
     total_chunks = total_steps / nstride;
 
-
     // Get the number of processes
     // Get the rank of the process
     world_size = comm.Get_size();
@@ -186,15 +185,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
 #endif
 
     // Create sub communicator on root process for DTL 
-    int color;
-    if (world_rank == 0) 
-    {
-        color = 0;
-    } 
-    else
-    {
-        color = 1; 
-    }
+    int color = (world_rank == 0) ? 0 : 1;
     MPI_Comm dtl_comm;
     MPI_Comm_split(comm.Get_comm(), color, world_rank, &dtl_comm);
 
@@ -202,7 +193,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
     {
         int dtl_rank;
         MPI_Comm_rank(dtl_comm, &dtl_rank);
-        printf("----===== Constructing PLUMED DispatchAtomsAction world_rank :%i, nprocs :%i dtl_rank : %d \n",world_rank,world_size, dtl_rank);
+        printf("----===== Constructing PLUMED DispatchAtomsAction world_rank : %i, nprocs : %i, dtl_rank : %d\n", world_rank, world_size, dtl_rank);
 
         if(target == "NONE") error("name out output target was not specified");
 
@@ -231,9 +222,7 @@ DispatchAtoms::DispatchAtoms(const ActionOptions&ao):
         {
             if (data_stage == "dataspaces")
             {
-                char* temp_var_name = "test_var";
                 printf("----===== Constructing DataSpacesWriter in Plumed ==========--------\n");
-                
                 dataspaces_writer_ptr = new DataSpacesWriter(client_id, group_id, total_chunks, dtl_comm);
                 dispatch_method = 3;
             }
